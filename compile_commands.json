@@ -1,0 +1,147 @@
+[
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/CodeGeneration/CG_Binop.c.o -c /home/m/Documents/Compiler/src/CodeGeneration/CG_Binop.c",
+  "file": "/home/m/Documents/Compiler/src/CodeGeneration/CG_Binop.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/CodeGeneration/CG_Expression.c.o -c /home/m/Documents/Compiler/src/CodeGeneration/CG_Expression.c",
+  "file": "/home/m/Documents/Compiler/src/CodeGeneration/CG_Expression.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/CodeGeneration/CG_NativeOP.c.o -c /home/m/Documents/Compiler/src/CodeGeneration/CG_NativeOP.c",
+  "file": "/home/m/Documents/Compiler/src/CodeGeneration/CG_NativeOP.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/CodeGeneration/CG_Statement.c.o -c /home/m/Documents/Compiler/src/CodeGeneration/CG_Statement.c",
+  "file": "/home/m/Documents/Compiler/src/CodeGeneration/CG_Statement.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/CodeGeneration/CG_UnOp.c.o -c /home/m/Documents/Compiler/src/CodeGeneration/CG_UnOp.c",
+  "file": "/home/m/Documents/Compiler/src/CodeGeneration/CG_UnOp.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Parser/P_BinOp.c.o -c /home/m/Documents/Compiler/src/Parser/P_BinOp.c",
+  "file": "/home/m/Documents/Compiler/src/Parser/P_BinOp.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Parser/P_Expression.c.o -c /home/m/Documents/Compiler/src/Parser/P_Expression.c",
+  "file": "/home/m/Documents/Compiler/src/Parser/P_Expression.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Parser/P_Statement.c.o -c /home/m/Documents/Compiler/src/Parser/P_Statement.c",
+  "file": "/home/m/Documents/Compiler/src/Parser/P_Statement.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Parser/P_Type.c.o -c /home/m/Documents/Compiler/src/Parser/P_Type.c",
+  "file": "/home/m/Documents/Compiler/src/Parser/P_Type.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Parser/P_UnOp.c.o -c /home/m/Documents/Compiler/src/Parser/P_UnOp.c",
+  "file": "/home/m/Documents/Compiler/src/Parser/P_UnOp.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Compiler.c.o -c /home/m/Documents/Compiler/src/Compiler.c",
+  "file": "/home/m/Documents/Compiler/src/Compiler.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Data.c.o -c /home/m/Documents/Compiler/src/Data.c",
+  "file": "/home/m/Documents/Compiler/src/Data.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Error.c.o -c /home/m/Documents/Compiler/src/Error.c",
+  "file": "/home/m/Documents/Compiler/src/Error.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Flags.c.o -c /home/m/Documents/Compiler/src/Flags.c",
+  "file": "/home/m/Documents/Compiler/src/Flags.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Function.c.o -c /home/m/Documents/Compiler/src/Function.c",
+  "file": "/home/m/Documents/Compiler/src/Function.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Main.c.o -c /home/m/Documents/Compiler/src/Main.c",
+  "file": "/home/m/Documents/Compiler/src/Main.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Optimizer.c.o -c /home/m/Documents/Compiler/src/Optimizer.c",
+  "file": "/home/m/Documents/Compiler/src/Optimizer.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Outfile.c.o -c /home/m/Documents/Compiler/src/Outfile.c",
+  "file": "/home/m/Documents/Compiler/src/Outfile.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Lexer.c.o -c /home/m/Documents/Compiler/src/Lexer.c",
+  "file": "/home/m/Documents/Compiler/src/Lexer.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Register.c.o -c /home/m/Documents/Compiler/src/Register.c",
+  "file": "/home/m/Documents/Compiler/src/Register.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Stack.c.o -c /home/m/Documents/Compiler/src/Stack.c",
+  "file": "/home/m/Documents/Compiler/src/Stack.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Token.c.o -c /home/m/Documents/Compiler/src/Token.c",
+  "file": "/home/m/Documents/Compiler/src/Token.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Util.c.o -c /home/m/Documents/Compiler/src/Util.c",
+  "file": "/home/m/Documents/Compiler/src/Util.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Value.c.o -c /home/m/Documents/Compiler/src/Value.c",
+  "file": "/home/m/Documents/Compiler/src/Value.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Variables.c.o -c /home/m/Documents/Compiler/src/Variables.c",
+  "file": "/home/m/Documents/Compiler/src/Variables.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Preprocessor.c.o -c /home/m/Documents/Compiler/src/Preprocessor.c",
+  "file": "/home/m/Documents/Compiler/src/Preprocessor.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Type.c.o -c /home/m/Documents/Compiler/src/Type.c",
+  "file": "/home/m/Documents/Compiler/src/Type.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/Scope.c.o -c /home/m/Documents/Compiler/src/Scope.c",
+  "file": "/home/m/Documents/Compiler/src/Scope.c"
+},
+{
+  "directory": "/home/m/Documents/Compiler",
+  "command": "/usr/bin/cc   -Wall -Wextra -g -std=gnu11 -o CMakeFiles/comp.dir/src/GenericList.c.o -c /home/m/Documents/Compiler/src/GenericList.c",
+  "file": "/home/m/Documents/Compiler/src/GenericList.c"
+}
+]
