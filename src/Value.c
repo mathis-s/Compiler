@@ -97,6 +97,7 @@ Value Value_GetUpperWord(const Value* value, bool* oReadOnly)
         case AddressType_MemoryRegister:
             retval = Value_Register(1);
             OutWrite("add r%i, r%i, 1\n", Value_GetR0(&retval), Value_GetR0(value));
+            retval.addressType = AddressType_MemoryRegister;
             *oReadOnly = false;
             break;
         case AddressType_MemoryRelative:
@@ -178,7 +179,7 @@ void Value_GenerateMemCpy(Value dstValue, Value srcValue)
     {
         if (dstValue.addressType == AddressType_Register)
         {
-            OutWrite("mov r%i, %i\n", Value_GetR0(&dstValue), srcValue.address & 0xFFFF);
+            OutWrite("mov r%i, %i\n", Value_GetR0((&dstValue)), srcValue.address & 0xFFFF);
             if (dstValue.size == 2)
                 OutWrite("mov r%i, %i\n", Value_GetR1(&dstValue), srcValue.address >> 16);
         }
@@ -493,7 +494,7 @@ void PrintValueAsOperand(const Value* val)
     }
 }
 
-// Stores whether the value is true or false in the zero flag
+// Stores whether the value is true or false in the zero flag.
 // Used for branches.
 void Value_ToFlag(Value* value)
 {
@@ -542,9 +543,18 @@ void Value_ToFlag(Value* value)
     {
         if (value->size == 1)
         {
-            Stack_ToAddress((int)value->address);
-            OutWrite("add [sp], 0\n");
+            int delta = Stack_GetDelta((int)value->address);
+            if (delta <= 255 && delta > 0)
+            {
+                OutWrite("add rz, [sp-%u]\n", delta);
+            }
+            else
+            {
+                Stack_ToAddress((int)value->address);
+                OutWrite("add rz, [sp]\n");
+            }
         }
+        // todo make this sp-relative too
         else if (value->size == 2)
         {
             Stack_ToAddress((int)value->address);

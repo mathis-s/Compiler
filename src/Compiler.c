@@ -25,21 +25,26 @@
 #include <stdlib.h>
 #include <string.h>
 
-
 static bool CompileGlobalVariable(TokenArray* t, size_t* i, Scope* globalScope)
 {
-    // Declaration (and Assigment)
+    // Declaration (and Assignment)
     if (IsDataToken(t->tokens[*i], globalScope))
     {
         int oldI = *i;
         char* id = NULL;
 
         VariableType* type = ParseVariableType(t->tokens, i, t->curLength, globalScope, &id, false);
-        if (type == NULL)
+        if (type == NULL || type->token == FunctionPointerToken)
         {
             *i = oldI;
             return false;
         }
+        if (id == NULL)
+        {
+            PopCur(i, Semicolon);
+            return false;
+        }
+
         int size = SizeInWords(type);
         Variable v = {type, id, (Value){(int32_t)GetGlobalDataIndex(), AddressType_Memory, size}, NULL};
 
@@ -66,8 +71,7 @@ static bool CompileGlobalVariable(TokenArray* t, size_t* i, Scope* globalScope)
 
             Type_RemoveReference(outType);
 
-            if (size != -1 && v.value.size != size)
-                ErrorAtIndex("Invalid size", oldI);
+            if (size != -1 && v.value.size != size) ErrorAtIndex("Invalid size", oldI);
 
             if (v.value.addressType != AddressType_Literal && v.value.addressType != AddressType_Memory)
                 ErrorAtIndex("Global variable must be compile-time constant", oldI);
@@ -92,8 +96,7 @@ static bool CompileGlobalVariable(TokenArray* t, size_t* i, Scope* globalScope)
                 return false;
             }
 
-            if (size == -1)
-                ErrorAtIndex("Invalid global variable", *i);
+            if (size == -1) ErrorAtIndex("Invalid global variable", *i);
             v.value.address = (int32_t)AllocateGlobalValue(size);
             v.value.size = size;
             v.value.addressType = AddressType_Memory;
@@ -101,8 +104,7 @@ static bool CompileGlobalVariable(TokenArray* t, size_t* i, Scope* globalScope)
 
         Inc(i);
 
-        if (Scope_NameIsUsed(globalScope, id))
-            ErrorAtIndex("Identifier already used!", *i);
+        if (Scope_NameIsUsed(globalScope, id)) ErrorAtIndex("Identifier already used!", *i);
 
         Scope_AddVariable(globalScope, v);
         return true;
@@ -111,234 +113,60 @@ static bool CompileGlobalVariable(TokenArray* t, size_t* i, Scope* globalScope)
     return false;
 }
 
-void CompileStructDeclaration(TokenArray* t, size_t* i, Scope* scope)
+bool CompileTypedef(TokenArray* t, size_t* i, Scope* scope)
 {
-    // Struct declaration
-    Struct s;
-    bool typedefDecl = false;
-    // CPP style struct name {};
-    if (t->tokens[*i].type == StructKeyword)
-    {
-        PopNext(i, Identifier);
-        s.identifier = t->tokens[(*i)++].data;
-    }
-    // Or typedef struct {} name; No anonymous structs!
-    else if ((*i + 1 < t->curLength) && t->tokens[*i].type == TypedefKeyword && t->tokens[*i + 1].type == StructKeyword)
-    {
-        (*i)++;
-        Inc(i);
-
-        typedefDecl = true;
-
-        if (t->tokens[*i].type == Identifier)
-        {
-            s.identifier = t->tokens[(*i)].data;
-            Inc(i);
-        }
-    }
-    else
-        return;
-
-    s.members = GenericList_Create(sizeof(Variable));
-    s.sizeInWords = 0;
-
-    // Forward declaration
-    if (t->tokens[*i].type == Semicolon)
-    {
-        Struct* outStruct = NULL;
-        if ((outStruct = Scope_FindStruct(scope, s.identifier)) != NULL)
-        {
-            if (outStruct->sizeInWords != 0)
-                ErrorAtIndex("Identifier already used", *i);
-        }
-        Inc(i);
-        Scope_AddStruct(scope, s);
-        return;
-    }
-
-    PopCur(i, CBrOpen);
-
-    while (t->tokens[*i].type != CBrClose)
-    {
-        char* id = NULL;
-        VariableType* type = ParseVariableType(t->tokens, i, t->curLength, scope, &id, false);
-
-        if (type == NULL || SizeInWords(type) == 0)
-            ErrorAtIndex("Invalid type!", *i);
-
-        Variable v = (Variable){type, id, {(int32_t)s.sizeInWords, AddressType_StructMember, SizeInWords(type)}, NULL};
-
-        GenericList_Append(&s.members, &v);
-
-        if (t->tokens[(*i)++].type != Semicolon)
-            SyntaxErrorAtIndex(*i);
-        s.sizeInWords += v.value.size;
-    }
+    if (t->tokens[*i].type != TypedefKeyword) return false;
     Inc(i);
 
-    if (typedefDecl)
+    VariableType* type = ParseVariableType(t->tokens, i, t->maxLength, scope, NULL, true);
+
+    if (type == NULL) ErrorAtIndex("Invalid type", *i);
+
+    if (t->maxLength - *i < 2 || t->tokens[*i].type != Identifier || t->tokens[*i + 1].type != Semicolon)
     {
-        if (t->tokens[(*i)].type != Identifier)
-            SyntaxErrorAtIndex(*i);
-        s.identifier = t->tokens[(*i)].data;
-        Inc(i);
+        Type_RemoveReference(type);
+        return false;
     }
 
-    Struct* outStruct = NULL;
-    if ((outStruct = Scope_FindStruct(scope, s.identifier)) != NULL)
+    const char* id = t->tokens[*i].data;
+    
+    Typedef* old;
+    if ((old = Scope_FindTypedef(scope, (char*)id)))
     {
-        // Complete forward declaration if it is one
-        if (outStruct->sizeInWords == 0)
-        {
-            GenericList_Dispose(&outStruct->members);
-            *outStruct = s;
-        }
-        else
-            ErrorAtIndex("Identifier already used", *i);
-    }
-    else
-    {
-        if (Scope_NameIsUsed(scope, s.identifier))
-            ErrorAtIndex("Identifier already used", *i);
-
-        Scope_AddStruct(scope, s);
-    }
-
-    if (t->tokens[*i].type != Semicolon)
-        SyntaxErrorAtIndex(*i);
-    (*i)++;
-}
-
-static void CompileEnumDeclaration(TokenArray* t, size_t* i, Scope* scope)
-{
-    Enum e;
-    bool typedefDecl = false;
-    // Enum declaration
-    if (t->tokens[*i].type == EnumKeyword)
-    {
-        PopNext(i, Identifier);
-        e.identifier = t->tokens[(*i)++].data;
-    }
-    else if (t->tokens[*i].type == TypedefKeyword && t->tokens[(*i) + 1].type == EnumKeyword)
-    {
-        (*i) += 2;
-        typedefDecl = true;
+        // FIXME: this should only work if old is an incomplete type AND only with typedefs in current scope
+        Type_RemoveReference(old->type);
+        old->type = type;
     }
     else
-        return;
-
-    PopCur(i, CBrOpen);
-
-    int currentId = 0;
-
-    while (t->tokens[*i].type != CBrClose)
-    {
-        if (t->tokens[(*i)].type != Identifier)
-            SyntaxErrorAtIndex(*i);
-        char* id = t->tokens[*i].data;
-
-        Inc(i);
-        if (t->tokens[(*i)].type == Assignment)
-        {
-            PopNext(i, IntLiteral);
-            currentId = (uint16_t)(*((uint32_t*)t->tokens[*i].data));
-            Inc(i);
-        }
-
-        Variable v = {Type_AddReference(&MachineUIntType), id, Value_Literal((int32_t)currentId++), NULL};
-
-        Scope_AddVariable(scope, v);
-
-        if (t->tokens[(*i)].type == Comma)
-            Inc(i);
-        else if (t->tokens[(*i)].type != CBrClose)
-            SyntaxErrorAtIndex(*i);
-    };
-    Inc(i);
-
-    if (typedefDecl)
-    {
-        if (t->tokens[(*i)].type != Identifier)
-            SyntaxErrorAtIndex(*i);
-        e.identifier = t->tokens[*i].data;
-        Inc(i);
-    }
-
-    Scope_AddEnum(scope, e);
-
-    if (t->tokens[*i].type != Semicolon)
-        SyntaxErrorAtIndex(*i);
-    (*i)++;
+        Scope_AddTypedef(scope, (Typedef){type, id});
+    *i += 2;
+    return true;
 }
 
 static bool CodeGenFunction(TokenArray* t, size_t* i, Scope* globalScope)
 {
     size_t oldI = *i;
 
-    VariableType* returnType = ParseVariableType(t->tokens, i, t->curLength, globalScope, NULL, true);
-    if (returnType == NULL)
+    char* identifier = NULL;
+    VariableTypeFunctionPointer* funcType =
+        (VariableTypeFunctionPointer*)ParseVariableType(t->tokens, i, t->curLength, globalScope, &identifier, true);
+    if (funcType == NULL || funcType->token != FunctionPointerToken)
     {
         *i = oldI;
         return false;
     }
 
-    if (t->tokens[(*i)].type != Identifier)
-        ErrorAtIndex("Expected identifier", *i);
-    char* identifier = t->tokens[*i].data;
-    if (Scope_NameIsUsed(globalScope, identifier))
-        ErrorAtIndex("Identifier already used", *i);
+    VariableType* returnType = funcType->func.returnType;
 
-    Inc(i);
+    if (identifier == NULL) SyntaxErrorAtIndex(*i);
+    if (Scope_NameIsUsed(globalScope, identifier)) ErrorAtIndex("Identifier already used", *i);
 
-    if (t->tokens[*i].type != RBrOpen)
-    {
-        Type_RemoveReference(returnType);
-        *i = oldI;
-        return false;
-    }
-    Inc(i);
-
-    bool variadicArguments = false;
-    GenericList parameters = GenericList_Create(sizeof(Variable));
-
-    int index = 1;
-    // Parse Parameter Types
-    while (true)
-    {
-        if (IsDataToken(t->tokens[*i], globalScope))
-        {
-            char* id = NULL;
-
-            VariableType* vt = ParseVariableType(t->tokens, i, t->curLength, globalScope, &id, false);
-            int size = 0;
-            if (vt == NULL || (size = SizeInWords(vt)) == -1)
-                ErrorAtIndex("Invalid type", *i);
-
-            index += size;
-            Variable var = (Variable){vt, id, (Value){(int32_t)index, AddressType_MemoryRelative, size}, NULL};
-            GenericList_Append(&parameters, &var);
-        }
-        else if (t->tokens[*i].type == DotDotDot)
-        {
-            variadicArguments = true;
-            PopNext(i, RBrClose);
-            break;
-        }
-        else if (t->tokens[*i].type == Comma)
-        {
-            Inc(i);
-            continue;
-        }
-        else if (t->tokens[*i].type == RBrClose)
-            break;
-        else
-            ErrorAtIndex("Invalid parameter type", *i);
-    }
-
-    PopCur(i, RBrClose);
-    Function newFunc = (Function){identifier, parameters, returnType, 0, variadicArguments, false};
+    Function newFunc = funcType->func;
+    newFunc.identifier = identifier;
     Function* outFunc = NULL;
     Function* function;
+
+    free(funcType); // hacky, bypass reference counting
 
     // Overwriting a forward declaration
     if ((outFunc = Function_Find(identifier)) != NULL)
@@ -351,10 +179,9 @@ static bool CodeGenFunction(TokenArray* t, size_t* i, Scope* globalScope)
         {
             Variable* oldParam = ((Variable*)GenericList_At(&outFunc->parameters, j));
             Variable* newParam = ((Variable*)GenericList_At(&newFunc.parameters, j));
-            if (!Type_Check(oldParam->type, newParam->type))
-                ErrorAtIndex("Identifier already used", *i);
+            if (!Type_Check(oldParam->type, newParam->type)) ErrorAtIndex("Identifier already used", *i);
 
-            assert(Type_RemoveReference(oldParam->type));
+            Type_RemoveReference(oldParam->type);
         }
         Type_RemoveReference(outFunc->returnType);
         GenericList_Dispose(&outFunc->parameters);
@@ -377,6 +204,7 @@ static bool CodeGenFunction(TokenArray* t, size_t* i, Scope* globalScope)
     {
         Function_SetCurrent(function);
 
+        GenericList parameters = function->parameters;
         Scope functionScope = Scope_Create(globalScope);
         GenericList_Dispose(&functionScope.variables);
         functionScope.variables = GenericList_CreateCopy(parameters);
@@ -402,8 +230,8 @@ static bool CodeGenFunction(TokenArray* t, size_t* i, Scope* globalScope)
             Registers_SetPreferred(&functionScope.preferredRegisters[0]);
         }
 
-        // if (strcmp(function->identifier, "main") == 0)
-        //  FunctionASTGraphviz(function, statements);
+        // if (strcmp(function->identifier, "Value_GenerateMemCpy") == 0)
+        //     FunctionASTGraphviz(function, statements);
 
         { // Code Generation
             OutWrite("_%s:\n", identifier);
@@ -416,14 +244,13 @@ static bool CodeGenFunction(TokenArray* t, size_t* i, Scope* globalScope)
         GenericList_Dispose(&statements);
         Function_SetCurrent(NULL);
 
-        if (returnType->token == VoidKeyword && returnType->pointerLevel == 0)
+        if (returnType->token == VoidKeyword)
         {
             Stack_ToAddress(Stack_GetSize() + 1);
-            OutWrite("mov ip, [sp]\nnop\n");
+            OutWrite("mov ip, [sp]\n");
         }
 
-        if (t->tokens[*i].type != CBrClose)
-            SyntaxErrorAtIndex(*i);
+        if (t->tokens[*i].type != CBrClose) SyntaxErrorAtIndex(*i);
         // The increment here is purposefully unsafe, as the CBrClose might
         // have been the last token
         (*i)++;
@@ -443,7 +270,7 @@ static bool generatedHeader = false;
 static void GenerateHeader()
 {
     OutWrite("add [sp++], ip, 2\n");
-    OutWrite("jmp _main\nnop\n__term_loop:\njmp __term_loop\nnop\n");
+    OutWrite("jmp _main\n__term_loop:\njmp __term_loop\n");
 }
 
 void Compile(TokenArray t)
@@ -464,18 +291,12 @@ void Compile(TokenArray t)
     while (i < t.curLength)
     {
         CompileGlobalVariable(&t, &i, &globalScope);
-        if (i >= t.curLength)
-            break;
-        CompileStructDeclaration(&t, &i, &globalScope);
-        if (i >= t.curLength)
-            break;
-        CompileEnumDeclaration(&t, &i, &globalScope);
-        if (i >= t.curLength)
-            break;
+        if (i >= t.curLength) break;
+        CompileTypedef(&t, &i, &globalScope);
+        if (i >= t.curLength) break;
         CodeGenFunction(&t, &i, &globalScope);
 
-        if (i == oldI)
-            SyntaxErrorAtIndex(i);
+        if (i == oldI) SyntaxErrorAtIndex(i);
         oldI = i;
     }
 

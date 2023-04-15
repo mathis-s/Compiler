@@ -6,7 +6,7 @@ just here for compiling itself.
 */
 void* malloc(size_t s);
 int32_t strtol(const char* c, char** endPointer, int base);
-struct FILE;
+typedef struct {} FILE;
 FILE* fopen(const char* path, const char* modes);
 int fseek(FILE* f, int32 off, int whence);
 int32_t ftell(FILE* f);
@@ -42,3 +42,7 @@ int sprintf(char* s, const char* fmt, ...);
 
 void qsort(void* base, size_t num, size_t membSize, bool (*compar)(const void*, const void*));
 void memset(void* dst, uint word, size_t len);
+
+int malloc_usable_size(const void* ptr);
+
+typedef int16_t ssize_t;

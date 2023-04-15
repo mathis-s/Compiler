@@ -1,189 +1,400 @@
 #include "P_Type.h"
-#include "../Scope.h"
 #include "../Function.h"
+#include "../Scope.h"
 #include "../Util.h"
+#include <malloc.h>
+#include <signal.h>
+#include <stddef.h>
+
+void* P_Type_PopNext(Token* tokens, const size_t maxLen, size_t* const i, TokenType type)
+{
+    if (++(*i) > maxLen)
+        SyntaxErrorAtToken(&tokens[*i - 1]);
+    if (tokens[*i].type != type)
+        SyntaxErrorAtToken(&tokens[*i]);
+
+    return tokens[*i].data;
+}
+
+void* P_Type_PopNextInc(Token* tokens, const size_t maxLen, size_t* const i, TokenType type)
+{
+    if (++(*i) > maxLen)
+        SyntaxErrorAtToken(&tokens[*i - 1]);
+    if (tokens[*i].type != type)
+        SyntaxErrorAtToken(&tokens[*i]);
+
+    void* retval = tokens[*i].data;
+    if (++(*i) > maxLen)
+        SyntaxErrorAtToken(&tokens[*i - 1]);
+    return retval;
+}
+
+void* P_Type_PopCur(Token* tokens, const size_t maxLen, size_t* const i, TokenType type)
+{
+    if (tokens[*i].type != type)
+        SyntaxErrorAtToken(&tokens[*i]);
+    void* retval = tokens[*i].data;
+    if (++(*i) > maxLen)
+        SyntaxErrorAtToken(&tokens[*i - 1]);
+    return retval;
+}
+
+void P_Type_Inc(Token* tokens, const size_t maxLen, size_t* const i)
+{
+    if (++(*i) > maxLen)
+        SyntaxErrorAtToken(&tokens[*i - 1]);
+}
 
 VariableType* ParseVariableType(Token* tokens, size_t* i, size_t maxLen, Scope* scope, char** identifier,
                                 bool allowVoid)
 {
-    Token token;
+    // Parse initial Qualifiers
     Qualifiers qualifiers = Qualifier_None;
-    void* structure = NULL;
-    int pointerLevel = 0;
-
     while (tokens[*i].type == ConstKeyword || tokens[*i].type == RegisterKeyword || tokens[*i].type == StaticKeyword)
     {
         switch (tokens[*i].type)
         {
-            case ConstKeyword:
-                qualifiers |= Qualifier_Const;
-                break;
-            case RegisterKeyword:
-                qualifiers |= Qualifier_Register;
-                break;
-            case StaticKeyword:
-                qualifiers |= Qualifier_Static;
-                break;
+            case ConstKeyword: qualifiers |= Qualifier_Const; break;
+            case RegisterKeyword: qualifiers |= Qualifier_Register; break;
+            case StaticKeyword: qualifiers |= Qualifier_Static; break;
             default:;
         }
-        Inc(i);
+        P_Type_Inc(tokens, maxLen, i);
     }
 
-    token = tokens[(*i)];
-    Inc(i);
+    // Parse Base Type: primitive, identifier, struct/enum/union or function pointer
+    VariableType* vtype = NULL;
 
-    // TODO: Maybe filter out all invalid tokens here with a switch?
-    // if (varType.token == StructKeyword || varType.token == EnumKeyword)
-    //   SyntaxErrorAtIndex(*i);
-    if (!IsDataToken(token, scope) && !(allowVoid && token.type == VoidKeyword))
-        return NULL;
+    Token token = tokens[(*i)];
 
-    if (token.type == Identifier)
+    switch (token.type)
     {
-        if ((structure = Scope_FindStruct(scope, token.data)) != NULL)
-            token.type = StructKeyword;
-        else if (Scope_FindEnum(scope, token.data) != NULL)
-            token.type = IntKeyword;
-        else
-            return NULL;
-    }
+        case IntKeyword:
+        case UintKeyword:
+        case Int32Keyword:
+        case Uint32Keyword:
+        case FixedKeyword:
+        case VoidKeyword:
+            vtype = xmalloc(sizeof(VariableType));
+            vtype->token = token.type;
+            vtype->refCount = 1;
+            vtype->qualifiers = qualifiers;
+            // vtype->pointerLevel = 0;
+            P_Type_Inc(tokens, maxLen, i);
+            break;
 
-    // Count stars after variable type to see if and what level of pointer it is.
-    while (tokens[(*i)].type == Star)
-    {
-        pointerLevel++;
-        Inc(i);
-    }
-
-    if (pointerLevel > 0)
-        while (tokens[*i].type == ConstKeyword || tokens[*i].type == RestrictKeyword)
+        case Identifier:
         {
-            if (tokens[*i].type == ConstKeyword)
-                qualifiers |= Qualifier_ConstPointer;
+            Typedef* td;
+            if ((td = Scope_FindTypedef(scope, token.data)))
+            {
+                // TODO: Copy isn't really necessary when not modifying type
+                vtype = Type_Copy(td->type);
+                vtype->qualifiers |= qualifiers;
+                P_Type_Inc(tokens, maxLen, i);
+            }
             else
-                qualifiers |= Qualifier_Restrict;
-            Inc(i);
-        }
-
-    // Function Pointer Type
-    if ((*i + 1) < maxLen && tokens[*i].type == RBrOpen && tokens[*i + 1].type == Star)
-    {
-        (*i)++;
-        Inc(i);
-
-        if (identifier != NULL)
-        {
-            if (tokens[*i].type != Identifier)
                 SyntaxErrorAtToken(&tokens[*i]);
-            *identifier = tokens[(*i)++].data;
+
+            break;
         }
 
-        if (tokens[(*i)].type != RBrClose || ((*i + 1 < maxLen) && tokens[(*i) + 1].type != RBrOpen))
-            SyntaxErrorAtToken(&tokens[*i]);
-
-        Inc(i);
-        Inc(i);
-
-        GenericList parameters = GenericList_Create(sizeof(Variable));
-
-        Function* fpointer = xmalloc(sizeof(Function));
-        fpointer->variadicArguments = false;
-
-        int index = 2;
-        // TODO count brackets everywhere
-        while (tokens[*i].type != RBrClose)
+        case UnionKeyword:
+        case StructKeyword:
         {
-            if (tokens[*i].type == DotDotDot)
-            {
-                fpointer->variadicArguments = true;
-                PopNext(i, RBrClose);
-                break;
-            }
-            VariableType* paramType = ParseVariableType(tokens, i, maxLen, scope, NULL, false);
-            int size = SizeInWords(paramType);
-            if (size == -1)
-                ErrorAtIndex("Invalid type", *i);
-            Variable v = (Variable){paramType, "", Value_MemoryRelative(index, size), (void*)NULL};
+            bool isUnion = tokens[*i].type == UnionKeyword;
+            P_Type_Inc(tokens, maxLen, i);
+            VariableTypeStruct* structType = xmalloc(sizeof(VariableTypeStruct));
+            structType->token = StructKeyword;
+            structType->qualifiers = Qualifier_None;
+            structType->refCount = 1;
 
-            GenericList_Append(&parameters, &v);
-
-            if (tokens[*i].type == Comma)
+            char* id = NULL;
+            if (tokens[*i].type == Identifier)
             {
-                Inc(i);
-                if (tokens[*i].type == RBrClose)
-                    SyntaxErrorAtToken(&tokens[*i]);
+                id = tokens[*i].data;
+                P_Type_Inc(tokens, maxLen, i);
             }
-            index += size;
+
+            if (tokens[*i].type == CBrOpen)
+            {
+                bool newAlloc = false;
+
+                Struct* struc;
+                if (id != NULL && (struc = Scope_FindStruct(scope, id)))
+                {
+                    // FIXME: this should only work if old is an incomplete def AND only with structs in current scope
+                    if (struc->sizeInWords != 0)
+                        ErrorAtToken("struct redefinition", &tokens[*i]);
+                }
+                else
+                {
+                    struc = xmalloc(sizeof(Struct));
+                    newAlloc = true;
+                }
+
+                struc->members = GenericList_Create(sizeof(Variable));
+                struc->sizeInWords = 0;
+                struc->identifier = id;
+                structType->str = struc;
+
+                P_Type_Inc(tokens, maxLen, i);
+
+                // TODO: Accept whatever nonsense you can have in a struct decl in C (multiple semicolons, empty defs,
+                // ...)
+                // TODO: Add anonymous inner structs and unions
+                while (tokens[*i].type != CBrClose)
+                {
+                    char* id = NULL;
+                    VariableType* memType = ParseVariableType(tokens, i, maxLen, scope, &id, false);
+                    int size = SizeInWords(memType);
+
+                    Variable v = (Variable){
+                        memType, id, {(int32_t)(isUnion ? 0 : struc->sizeInWords), AddressType_StructMember, size}, NULL};
+                    GenericList_Append(&struc->members, &v);
+
+                    if (!isUnion)
+                        struc->sizeInWords += SizeInWords(memType);
+                    else if (size > struc->sizeInWords)
+                        struc->sizeInWords = size;
+
+                    P_Type_PopCur(tokens, maxLen, i, Semicolon);
+                }
+
+                P_Type_Inc(tokens, maxLen, i);
+
+                // TODO: Add global list for union names
+                if (id != NULL && !isUnion && newAlloc)
+                {
+                    Scope_AddStruct(scope, struc);
+                }
+            }
+            else
+            {
+                if (isUnion)
+                {
+                    ErrorAtToken("not implemented", &tokens[*i]);
+                }
+                else
+                {
+                    if (id == NULL)
+                        SyntaxErrorAtToken(&tokens[*i]);
+                    structType->str = Scope_FindStruct(scope, id);
+                    if (structType->str == NULL)
+                        ErrorAtToken("undefined", &tokens[*i]);
+                }
+            }
+
+            vtype = (VariableType*)structType;
+            break;
         }
-        Inc(i);
 
-        fpointer->identifier = "";
-        fpointer->parameters = parameters;
-        VariableType* retType = xmalloc(sizeof(VariableType));
-        retType->pointerLevel = pointerLevel;
-        retType->qualifiers = qualifiers;
-        retType->refCount = 1;
-        retType->structure = structure;
-        retType->token = token.type;
-        fpointer->returnType = retType;
+        case EnumKeyword:
+        {
+            P_Type_Inc(tokens, maxLen, i);
 
-        // We have to assume the function called using a function pointer
-        // modifies all registers.
-        fpointer->modifiedRegisters = 0xFFFF;
+            char* id = NULL;
+            if (tokens[*i].type == Identifier)
+            {
+                id = tokens[*i].data;
+                P_Type_Inc(tokens, maxLen, i);
+            }
 
-        VariableType* varType = xmalloc(sizeof(VariableType));
-        varType->token = FunctionPointerToken;
-        varType->pointerLevel = 0;
-        varType->structure = fpointer;
-        varType->refCount = 1;
-        varType->qualifiers = Qualifier_None;
+            uint32_t currentId = 0;
 
-        return varType;
+            if (tokens[*i].type == CBrOpen)
+            {
+                P_Type_Inc(tokens, maxLen, i);
+
+                while (tokens[*i].type != CBrClose)
+                {
+                    if (tokens[(*i)].type != Identifier)
+                        SyntaxErrorAtToken(&tokens[*i]);
+                    char* label = tokens[*i].data;
+                    P_Type_Inc(tokens, maxLen, i);
+
+                    if (tokens[(*i)].type == Assignment)
+                        currentId = (*((uint32_t*)P_Type_PopNextInc(tokens, maxLen, i, IntLiteral)));
+
+                    Scope_AddVariable(scope, (Variable){Type_AddReference(&MachineUIntType), label,
+                                                        Value_Literal((currentId++)), NULL});
+
+                    if (tokens[(*i)].type == Comma)
+                        P_Type_Inc(tokens, maxLen, i);
+                    else if (tokens[(*i)].type != CBrClose)
+                        SyntaxErrorAtToken(&tokens[*i]);
+                }
+                P_Type_Inc(tokens, maxLen, i);
+
+                if (id != NULL)
+                    Scope_AddEnum(scope, (Enum){id});
+            }
+            else
+            {
+                if (!Scope_FindEnum(scope, id))
+                    ErrorAtToken("undefined", &tokens[*i - 1]);
+            }
+        }
+
+        default: break;
     }
 
-    if (token.type == VoidKeyword && pointerLevel == 0 && !(allowVoid))
+    if (vtype == NULL)
+        vtype = Type_AddReference(&MachineIntType);
+
+    ssize_t next = -1;
+    ssize_t last = -1;
+    bool identParsed = false;
+    while (true)
+    {
+        switch (tokens[*i].type)
+        {
+            case Identifier:
+                if (identifier)
+                    *identifier = tokens[*i].data;
+                else
+                    break;
+                P_Type_Inc(tokens, maxLen, i);
+                identParsed = true;
+                continue;
+
+            case Star:
+            {
+                // vtype->pointerLevel++;
+                VariableTypePtr* ptrType = xmalloc(sizeof(VariableTypePtr));
+                ptrType->refCount = 1;
+                ptrType->token = PointerToken;
+                ptrType->baseType = vtype;
+                ptrType->qualifiers = Qualifier_None;
+                vtype = (VariableType*)ptrType;
+
+                P_Type_Inc(tokens, maxLen, i);
+                continue;
+            }
+
+            case ABrOpen:
+            {
+                int32_t* size = P_Type_PopNext(tokens, maxLen, i, IntLiteral);
+
+                VariableTypeArray* atype = xmalloc(sizeof(VariableTypeArray));
+                atype->memberType = vtype;
+                atype->memberCount = (int)*size;
+                atype->refCount = 1;
+                atype->qualifiers = Qualifier_None;
+                atype->token = ArrayToken;
+
+                vtype = (VariableType*)atype;
+
+                P_Type_PopNextInc(tokens, maxLen, i, ABrClose);
+                continue;
+            }
+
+            case RBrOpen:
+            {
+                if (next == -1 && !identParsed)
+                {
+                    P_Type_Inc(tokens, maxLen, i);
+                    next = *i;
+                    int brLevel = 1;
+                    while (brLevel != 0)
+                    {
+                        TokenType type = tokens[*i].type;
+                        if (type == RBrOpen)
+                            brLevel++;
+                        if (type == RBrClose)
+                            brLevel--;
+                        P_Type_Inc(tokens, maxLen, i);
+                    }
+                    continue;
+                }
+                else
+                {
+                    P_Type_Inc(tokens, maxLen, i);
+                    // Function
+                    VariableTypeFunctionPointer* ftype = xmalloc(sizeof(VariableTypeFunctionPointer));
+                    ftype->refCount = 1;
+                    ftype->token = FunctionPointerToken;
+                    ftype->qualifiers = Qualifier_None;
+
+                    ftype->func.identifier = "";
+                    ftype->func.isForwardDecl = false;
+                    ftype->func.modifiedRegisters = 0xFFFF;
+                    ftype->func.returnType = vtype;
+                    ftype->func.variadicArguments = false;
+                    GenericList parameters = GenericList_Create(sizeof(Variable));
+
+                    int index = 1;
+                    while (true)
+                    {
+                        if (IsDataToken(tokens[*i], scope))
+                        {
+                            char* id = NULL;
+
+                            VariableType* vt = ParseVariableType(tokens, i, maxLen, scope, &id, false);
+                            int size = 0;
+                            if (vt == NULL || (size = SizeInWords(vt)) == -1)
+                                ErrorAtIndex("Invalid type", *i);
+
+                            index += size;
+                            Variable var =
+                                (Variable){vt, id, (Value){(int32_t)index, AddressType_MemoryRelative, size}, NULL};
+                            GenericList_Append(&parameters, &var);
+                        }
+                        else if (tokens[*i].type == DotDotDot)
+                        {
+                            ftype->func.variadicArguments = true;
+                            P_Type_PopNext(tokens, maxLen, i, RBrClose);
+                            break;
+                        }
+                        else if (tokens[*i].type == Comma)
+                        {
+                            P_Type_Inc(tokens, maxLen, i);
+                            continue;
+                        }
+                        else if (tokens[*i].type == RBrClose)
+                            break;
+                        else
+                            ErrorAtIndex("Invalid parameter type", *i);
+                    }
+                    P_Type_PopCur(tokens, maxLen, i, RBrClose);
+
+                    ftype->func.parameters = parameters;
+                    vtype = (VariableType*)ftype;
+                    continue;
+                }
+            }
+
+            case ConstKeyword:
+                vtype->qualifiers |= Qualifier_Const;
+                P_Type_Inc(tokens, maxLen, i);
+                continue;
+            case RestrictKeyword:
+                vtype->qualifiers |= Qualifier_Restrict;
+                P_Type_Inc(tokens, maxLen, i);
+                continue;
+
+            default: break;
+        }
+
+        if (next != -1)
+        {
+            if (last == -1)
+                last = *i;
+            *i = next;
+            next = -1;
+        }
+        else
+            break;
+    }
+
+    if (last != -1)
+        *i = last;
+
+    if (vtype->token == VoidKeyword && !allowVoid)
+    {
+        Type_RemoveReference(vtype);
         return NULL;
-
-    if (identifier != NULL)
-    {
-        if (tokens[*i].type != Identifier)
-            ErrorAtIndex("Expected identifier!", *i);
-        *identifier = tokens[(*i)++].data;
     }
 
-    VariableType* varType = xmalloc(sizeof(VariableType));
-    varType->token = token.type;
-    varType->pointerLevel = pointerLevel;
-    varType->structure = structure;
-    varType->refCount = 1;
-    varType->qualifiers = qualifiers;
-
-    // Array
-    if (tokens[*i].type == ABrOpen)
-    {
-        Inc(i);
-
-        int elemCount = -1;
-        if (tokens[(*i)].type == IntLiteral)
-        {
-            elemCount = (int)(*(int32_t*)tokens[*i].data);
-            Inc(i);
-        }
-        PopCur(i, ABrClose);
-
-        varType->qualifiers = Qualifier_None;
-
-        VariableTypeArray* array = xmalloc(sizeof(VariableTypeArray));
-        array->token = ArrayToken;
-        array->memberCount = elemCount;
-        array->memberType = varType;
-        array->refCount = 1;
-        array->pointerLevel = 0;
-        array->qualifiers = qualifiers;
-        array->structure = NULL;
-
-        return (VariableType*)array;
-    }
-
-    return varType;
+    return vtype;
 }

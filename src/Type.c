@@ -10,15 +10,11 @@
 
 int SizeInWords(const VariableType* type)
 {
-    if (type->pointerLevel > 0)
-        return 1;
-
     assert(type->token != Identifier);
 
     if (type->token == StructKeyword)
     {
-        assert(type->structure != NULL);
-        return ((Struct*)type->structure)->sizeInWords;
+        return ((const VariableTypeStruct*)type)->str->sizeInWords;
     }
 
     if (type->token == ArrayToken)
@@ -34,6 +30,7 @@ int SizeInWords(const VariableType* type)
     {
         case VoidKeyword:
             return 0;
+        case PointerToken:
         case IntKeyword:
         case UintKeyword:
         case FixedKeyword:
@@ -62,12 +59,16 @@ bool IsDataToken(Token token, Scope* scope)
         case Uint32Keyword:
         case FixedKeyword:
         case VoidKeyword:
+        case StructKeyword:
+        case EnumKeyword:
             return true;
 
         case Identifier:
             if (scope == NULL)
                 return true;
-            return Scope_FindStruct(scope, token.data) != NULL || Scope_FindEnum(scope, token.data) != NULL;
+            return Scope_FindStruct(scope, token.data) != NULL || 
+                Scope_FindEnum(scope, token.data) != NULL ||
+                Scope_FindTypedef(scope, token.data) != NULL;
 
         default:
             return false;
@@ -91,8 +92,9 @@ bool IsDataType(const VariableType* type)
             return true;
         case FunctionPointerToken:
             return true;
-        case VoidKeyword:
-            return type->pointerLevel > 0;
+        case PointerToken:
+            return true;
+        
 
         default:
             return false;
@@ -101,7 +103,7 @@ bool IsDataType(const VariableType* type)
 
 bool IsPrimitiveType(const VariableType* type)
 {
-    if (type->pointerLevel > 0 || type->token == FunctionPointerToken)
+    if (type->token == PointerToken || type->token == FunctionPointerToken)
         return true;
     if (type->token == ArrayToken)
         return false;
@@ -119,7 +121,7 @@ bool Type_Check(const VariableType* a, const VariableType* b)
         return false;
 
     // Implicit conversion between all pointers
-    if (a->pointerLevel > 0 || b->pointerLevel > 0)
+    if (a->token == PointerToken || b->token == PointerToken)
         return true;
 
     // if ((a->structure == NULL) != (b->structure == NULL)) return false;
@@ -150,14 +152,32 @@ VariableType* Type_Copy(VariableType* type)
         case ArrayToken:
             retval = xmalloc(sizeof(VariableTypeArray));
             *(VariableTypeArray*)retval = *(VariableTypeArray*)type;
+            
+            Type_AddReference(((VariableTypeArray*)type)->memberType);
+            break;
+        case StructKeyword:
+            retval = xmalloc(sizeof(VariableTypeStruct));
+            *(VariableTypeStruct*)retval = *(VariableTypeStruct*)type;
+            break;
+        case PointerToken:
+            retval = xmalloc(sizeof(VariableTypePtr));
+            *(VariableTypePtr*)retval = *(VariableTypePtr*)type;
+            break;
+        case FunctionPointerToken:
+            retval = xmalloc(sizeof(VariableTypeFunctionPointer));
+            *(VariableTypeFunctionPointer*)retval = *(VariableTypeFunctionPointer*)type;
+
+            const Function* func = &((VariableTypeFunctionPointer*)retval)->func;
+            Type_AddReference(func->returnType);
+            for (size_t i = 0; i < func->parameters.count; i++)
+                Type_AddReference(GenericList_At(&func->parameters, i));
+            
+            break;
     }
 
     retval->refCount = 1;
-    type->refCount--;
-
-    // The copy also references to any underlying types
-    if (type->token == ArrayToken)
-        Type_AddReference(((VariableTypeArray*)type)->memberType);
+    /*type->refCount--;
+    
 
     if (type->refCount == 0)
     {
@@ -165,7 +185,7 @@ VariableType* Type_Copy(VariableType* type)
             Type_RemoveReference(((VariableTypeArray*)(type))->memberType);
         else if (type->token == FunctionPointerToken)
         {
-            Function* func = ((Function*)(type->structure));
+            Function* func = &((VariableTypeFunctionPointer*)type)->func;
             Type_RemoveReference(func->returnType);
             for (size_t i = 0; i < func->parameters.count; i++)
             {
@@ -173,10 +193,9 @@ VariableType* Type_Copy(VariableType* type)
                 Type_RemoveReference(var->type);
             }
             GenericList_Dispose(&func->parameters);
-            free(func);
         }
         free(type);
-    }
+    }*/
     return retval;
 }
 bool Type_RemoveReference(VariableType* type)
@@ -187,9 +206,12 @@ bool Type_RemoveReference(VariableType* type)
         if (type->token == ArrayToken)
             Type_RemoveReference(((VariableTypeArray*)(type))->memberType);
 
+        else if (type->token == PointerToken)
+            Type_RemoveReference(((VariableTypePtr*)type)->baseType);
+
         else if (type->token == FunctionPointerToken)
         {
-            Function* func = ((Function*)(type->structure));
+            Function* func = &((VariableTypeFunctionPointer*)type)->func;
             Type_RemoveReference(func->returnType);
             for (size_t i = 0; i < func->parameters.count; i++)
             {
@@ -197,7 +219,6 @@ bool Type_RemoveReference(VariableType* type)
                 Type_RemoveReference(var->type);
             }
             GenericList_Dispose(&func->parameters);
-            free(func);
         }
         free(type);
         return true;

@@ -33,7 +33,9 @@ GenericList GenericList_CreateCopy(GenericList original)
 void* GenericList_Append(GenericList* this, void* member)
 {
     if (this->count == this->maxCount)
+    {
         this->data = xrealloc(this->data, (this->maxCount *= 2) * this->memberSize);
+    }
 
     void* addr = this->data + this->count * this->memberSize;
     memcpy(addr, member, this->memberSize);
@@ -41,7 +43,7 @@ void* GenericList_Append(GenericList* this, void* member)
     return addr;
 }
 
-void* GenericList_At(GenericList* this, size_t index)
+void* GenericList_At(const GenericList* this, size_t index)
 {
     return this->data + index * this->memberSize;
 }

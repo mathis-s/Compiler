@@ -43,9 +43,16 @@ static bool CompareEnumToID(const void* variable, const void* identifier)
     return strcmp(e->identifier, id) == 0;
 }
 
+static bool CompareTypedefToID(const void* variable, const void* identifier)
+{
+    Typedef* td = (Typedef*)variable;
+    char* id = (char*)identifier;
+
+    return strcmp(td->name, id) == 0;
+}
+
 void Scope_Dispose(Scope* this)
 {
-    // This is a bit ugly...
     for (size_t i = 0; i < this->variables.count; i++)
     {
         Variable* handle = (Variable*)GenericList_At(&this->variables, i);
@@ -66,6 +73,7 @@ void Scope_Dispose(Scope* this)
     GenericList_Dispose(&this->variables);
     GenericList_Dispose(&this->structs);
     GenericList_Dispose(&this->enums);
+    GenericList_Dispose(&this->typedefs);
 }
 
 Scope Scope_Create(Scope* parent)
@@ -74,6 +82,7 @@ Scope Scope_Create(Scope* parent)
                    GenericList_Create(sizeof(Variable)),
                    GenericList_Create(sizeof(Struct*)),
                    GenericList_Create(sizeof(Enum)),
+                   GenericList_Create(sizeof(Typedef)),
                    {0, 0, 0, 0, 0, 0, 0, 0}};
 }
 
@@ -101,7 +110,7 @@ void Scope_DeleteVariable(Scope* this, Variable* var)
 // after a loop (those that are last accessed in a loop).
 // We delete them by calling this after a loop.
 void Scope_DeleteVariablesAfterLoop(Scope* this, void* loop)
-{
+{   
     do
     {
         for (size_t i = 0; i < this->variables.count; i++)
@@ -158,19 +167,33 @@ Enum* Scope_FindEnum(Scope* this, char* id)
     return retval;
 }
 
+Typedef* Scope_FindTypedef(Scope* this, char* id)
+{
+    Typedef* retval = GenericList_Find(&this->typedefs, CompareTypedefToID, id);
+
+    if (retval == NULL && this->parent != NULL)
+        return Scope_FindTypedef(this->parent, id);
+
+    return retval;
+}
+
+
 void Scope_AddVariable(Scope* this, Variable var)
 {
     GenericList_Append(&this->variables, &var);
 }
 
-void Scope_AddStruct(Scope* this, Struct s)
+void Scope_AddStruct(Scope* this, Struct* s)
 {
-    Struct* copy = xmalloc(sizeof(Struct));
-    *copy = s;
-    GenericList_Append(&this->structs, &copy);
+    GenericList_Append(&this->structs, &s);
 }
 
 void Scope_AddEnum(Scope* this, Enum e)
 {
     GenericList_Append(&this->enums, &e);
+}
+
+void Scope_AddTypedef (Scope* this, Typedef t)
+{
+    GenericList_Append(&this->typedefs, &t);
 }

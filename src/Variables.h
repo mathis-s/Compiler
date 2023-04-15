@@ -17,7 +17,7 @@
 typedef struct Scope Scope;
 #endif
 #ifdef CUSTOM_COMP
-struct Scope;
+typedef struct Scope {} Scope;
 #endif
 
 typedef struct

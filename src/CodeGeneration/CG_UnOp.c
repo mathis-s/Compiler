@@ -5,25 +5,27 @@
 #include "../Stack.h"
 #include "../Token.h"
 #include "../Type.h"
+#include "../Util.h"
 #include "../Value.h"
 #include "../Variables.h"
 #include "CG_Binop.h"
 #include "CG_Expression.h"
 #include "CG_NativeOP.h"
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 
+static int32_t GetIncrement(VariableType* type)
+{
+    if (type->token == PointerToken)
+        return (int32_t)SizeInWords(((VariableTypePtr*)type)->baseType);
+    else
+        return 1;
+}
+
 void UnopIncrementPostG(Value* dstValue, Value* srcValue, bool* oReadOnly, VariableType* type)
 {
-    Value srcB;
-    if (type->pointerLevel > 0)
-    {
-        type->pointerLevel--;
-        srcB = Value_Literal((int32_t)SizeInWords(type));
-        type->pointerLevel++;
-    }
-    else
-        srcB = Value_Literal((int32_t)1);
+    Value srcB = Value_Literal(GetIncrement(type));
 
     if (dstValue != NULL)
     {
@@ -48,15 +50,7 @@ void UnopIncrementPostG(Value* dstValue, Value* srcValue, bool* oReadOnly, Varia
 
 void UnopDecrementPostG(Value* dstValue, Value* srcValue, bool* oReadOnly, VariableType* type)
 {
-    Value srcB;
-    if (type->pointerLevel > 0)
-    {
-        type->pointerLevel--;
-        srcB = Value_Literal((int32_t)SizeInWords(type));
-        type->pointerLevel++;
-    }
-    else
-        srcB = Value_Literal((int32_t)1);
+    Value srcB = Value_Literal(GetIncrement(type));
 
     if (dstValue != NULL)
     {
@@ -81,15 +75,7 @@ void UnopDecrementPostG(Value* dstValue, Value* srcValue, bool* oReadOnly, Varia
 
 void UnopIncrementPreG(Value* dstValue, Value* srcValue, bool* oReadOnly, VariableType* type)
 {
-    Value srcB;
-    if (type->pointerLevel > 0)
-    {
-        type->pointerLevel--;
-        srcB = Value_Literal((int32_t)SizeInWords(type));
-        type->pointerLevel++;
-    }
-    else
-        srcB = Value_Literal((int32_t)1);
+    Value srcB = Value_Literal(GetIncrement(type));
 
     if (srcValue->size == 1)
         GenerateNativeOP(NativeOP_Add, srcValue, *srcValue, srcB, true, true);
@@ -108,16 +94,7 @@ void UnopIncrementPreG(Value* dstValue, Value* srcValue, bool* oReadOnly, Variab
 
 void UnopDecrementPreG(Value* dstValue, Value* srcValue, bool* oReadOnly, VariableType* type)
 {
-
-    Value srcB;
-    if (type->pointerLevel > 0)
-    {
-        type->pointerLevel--;
-        srcB = Value_Literal((int32_t)SizeInWords(type));
-        type->pointerLevel++;
-    }
-    else
-        srcB = Value_Literal((int32_t)1);
+    Value srcB = Value_Literal(GetIncrement(type));
 
     if (srcValue->size == 1)
         GenerateNativeOP(NativeOP_Sub, srcValue, *srcValue, srcB, true, true);
@@ -207,19 +184,19 @@ void CodeGen_Dereference(AST_Expression_UnOp* expr, Scope* scope, Value* oValue,
         return;
     }
 
+
     Value src = NullValue;
     VariableType* srcType;
     bool srcReadOnly;
     CodeGen_Expression(expr->exprA, scope, &src, &srcType, &srcReadOnly);
 
-    if (srcType->pointerLevel == 0)
+    if (srcType->token != PointerToken)
         ErrorAtLocation("Invalid dereference", expr->loc);
 
-    srcType = Type_Copy(srcType);
-    srcType->pointerLevel--;
+    VariableType* base = ((VariableTypePtr*)srcType)->baseType;
 
     if (oType != NULL)
-        *oType = Type_AddReference(srcType);
+        *oType = Type_AddReference(base);
 
     // TODO optimize types other than register.
     Value addr = NullValue;
@@ -247,7 +224,7 @@ void CodeGen_Dereference(AST_Expression_UnOp* expr, Scope* scope, Value* oValue,
     }
 
     addr.addressType = AddressType_MemoryRegister;
-    addr.size = SizeInWords(srcType);
+    addr.size = SizeInWords(base);
     Type_RemoveReference(srcType);
     *oValue = addr;
 }
@@ -265,12 +242,15 @@ void CodeGen_AddressOf(AST_Expression_UnOp* expr, Scope* scope, Value* oValue, V
     bool srcReadOnly;
     CodeGen_Expression(expr->exprA, scope, &src, &srcType, &srcReadOnly);
 
-    srcType = Type_Copy(srcType);
-    srcType->pointerLevel++;
+    VariableTypePtr* ptr = xmalloc(sizeof(VariableTypePtr));
+    ptr->qualifiers = Qualifier_None;
+    ptr->refCount = 1;
+    ptr->token = PointerToken;
+    ptr->baseType = srcType;
 
     if (oType != NULL)
-        *oType = Type_AddReference(srcType);
-    Type_RemoveReference(srcType);
+        *oType = Type_AddReference((VariableType*)ptr);
+    Type_RemoveReference((VariableType*)ptr);
 
     if (src.addressType == AddressType_Memory)
     {
@@ -352,6 +332,11 @@ void CodeGen_ExpressionUnaryOperator(AST_Expression_UnOp* expr, Scope* scope, Va
         bool inReadOnly;
         CodeGen_Expression(expr->exprA, scope, &in, &inType, &inReadOnly);
 
+        if ((expr->op == UnOp_PostDecrement || expr->op == UnOp_PreDecrement || expr->op == UnOp_PostIncrement ||
+             expr->op == UnOp_PreIncrement) &&
+            (inType->qualifiers & Qualifier_Const))
+            ErrorAtLocation("const value can not be modified", expr->loc);
+
         if (in.addressType == AddressType_Literal && oValue != NULL)
         {
             oValue->addressType = AddressType_Literal;
@@ -360,46 +345,24 @@ void CodeGen_ExpressionUnaryOperator(AST_Expression_UnOp* expr, Scope* scope, Va
 
             switch (expr->op)
             {
-                case UnOp_LogicalNOT:
-                    oValue->address = (int32_t)(!((int)in.address));
-                    break;
-                case UnOp_BitwiseNOT:
-                    oValue->address = ~in.address;
-                    break;
-                case UnOp_Negate:
-                    oValue->address = -in.address;
-                    break;
-                default:
-                    ErrorAtLocation("Invalid unop", expr->loc);
+                case UnOp_LogicalNOT: oValue->address = (int32_t)(!((int)in.address)); break;
+                case UnOp_BitwiseNOT: oValue->address = ~in.address; break;
+                case UnOp_Negate: oValue->address = -in.address; break;
+                default: ErrorAtLocation("Invalid unop", expr->loc);
             }
         }
         else
         {
             switch (expr->op)
             {
-                case UnOp_PostDecrement:
-                    UnopDecrementPostG(oValue, &in, oReadOnly, inType);
-                    break;
-                case UnOp_PreDecrement:
-                    UnopDecrementPreG(oValue, &in, oReadOnly, inType);
-                    break;
-                case UnOp_PostIncrement:
-                    UnopIncrementPostG(oValue, &in, oReadOnly, inType);
-                    break;
-                case UnOp_PreIncrement:
-                    UnopIncrementPreG(oValue, &in, oReadOnly, inType);
-                    break;
-                case UnOp_LogicalNOT:
-                    UnopLogicalNOT(oValue, &in, oReadOnly);
-                    break;
-                case UnOp_Negate:
-                    UnopNegate(oValue, &in, oReadOnly);
-                    break;
-                case UnOp_BitwiseNOT:
-                    UnopNOT(oValue, &in, oReadOnly);
-                    break;
-                default:
-                    ErrorAtLocation("Invalid unop", expr->loc);
+                case UnOp_PostDecrement: UnopDecrementPostG(oValue, &in, oReadOnly, inType); break;
+                case UnOp_PreDecrement: UnopDecrementPreG(oValue, &in, oReadOnly, inType); break;
+                case UnOp_PostIncrement: UnopIncrementPostG(oValue, &in, oReadOnly, inType); break;
+                case UnOp_PreIncrement: UnopIncrementPreG(oValue, &in, oReadOnly, inType); break;
+                case UnOp_LogicalNOT: UnopLogicalNOT(oValue, &in, oReadOnly); break;
+                case UnOp_Negate: UnopNegate(oValue, &in, oReadOnly); break;
+                case UnOp_BitwiseNOT: UnopNOT(oValue, &in, oReadOnly); break;
+                default: ErrorAtLocation("Invalid unop", expr->loc);
             }
 
             if (!inReadOnly)

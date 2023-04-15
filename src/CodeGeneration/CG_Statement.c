@@ -1,4 +1,5 @@
 #include "CG_Statement.h"
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -90,12 +91,13 @@ static void CodeGen_ReturnStatement(AST_Statement_Return* stmt, Scope* scope)
     }
 
     Stack_ToAddress(Stack_GetSize() + 1);
-    OutWrite("mov ip, [sp]\nnop\n");
+    OutWrite("mov ip, [sp]\n");
 
     // Reset the stack to was it was before the return
     // otherwise some unreachable instructions that align the stack
     // afterwards are generated.
     Stack_SetOffset(spOffset);
+    ShiftAddressSpace(scope, stackSize - Stack_GetSize());
     Stack_SetSize(stackSize);
 }
 
@@ -109,13 +111,12 @@ static void CodeGen_IfStatement(AST_Statement_If* stmt, Scope* scope)
     if (outValue.addressType == AddressType_Flag)
     {
         OutWrite("jmp%s else%u\n", Flags_FlagToString(Flags_Invert((Flag)outValue.address)), ifId);
-        OutWrite("nop\n");
     }
     else
     {
         Value_ToFlag(&outValue);
         OutWrite("jmp_z else%u\n", ifId);
-        OutWrite("nop\n");
+        //OutWrite("nop\n");
     }
 
     int spOffsetPostCond = Stack_GetOffset();
@@ -137,7 +138,7 @@ static void CodeGen_IfStatement(AST_Statement_If* stmt, Scope* scope)
         // SetStackSize(stackSizePostCond);
 
         OutWrite("jmp n_else%u\n", ifId);
-        OutWrite("nop\n");
+        //OutWrite("nop\n");
         OutWrite("else%u:\n", ifId);
 
         CodeGen_Statement(stmt->ifFalse, scope);
@@ -179,13 +180,13 @@ static void CodeGen_WhileLoop(AST_Statement_While* stmt, Scope* scope)
         if (outValue.addressType == AddressType_Flag)
         {
             OutWrite("jmp%s while_end%u\n", Flags_FlagToString(Flags_Invert((Flag)outValue.address)), whileId);
-            OutWrite("nop\n");
+            //OutWrite("nop\n");
         }
         else
         {
             Value_ToFlag(&outValue);
             OutWrite("jmp_z while_end%u\n", whileId);
-            OutWrite("nop\n");
+            //OutWrite("nop\n");
         }
     }
 
@@ -204,7 +205,7 @@ static void CodeGen_WhileLoop(AST_Statement_While* stmt, Scope* scope)
     Stack_Align();
 
     OutWrite("jmp while_loop%u\n", whileId);
-    OutWrite("nop\n");
+    //OutWrite("nop\n");
     OutWrite("while_end%u:\n", whileId);
 
     Stack_SetOffset(loopState.currentLoopBreakSpOffset);
@@ -260,7 +261,7 @@ static void CodeGen_DoWhileLoop(AST_Statement_Do* stmt, Scope* scope)
     if (!outReadOnly)
         Value_FreeValue(&outValue);
 
-    OutWrite("nop\n");
+    //OutWrite("nop\n");
     OutWrite("do_end%u:\n", doId);
 
     Scope_DeleteVariablesAfterLoop(scope, stmt);
@@ -298,13 +299,13 @@ static void CodeGen_ForLoop(AST_Statement_For* stmt, Scope* scope)
     if (outValue.addressType == AddressType_Flag)
     {
         OutWrite("jmp%s for_break%u\n", Flags_FlagToString(Flags_Invert((Flag)outValue.address)), forLoopId);
-        OutWrite("nop\n");
+        //OutWrite("nop\n");
     }
     else
     {
         Value_ToFlag(&outValue);
         OutWrite("jmp_z for_break%u\n", forLoopId);
-        OutWrite("nop\n");
+        //OutWrite("nop\n");
     }
 
     int spOffsetPostCond = Stack_GetOffset();
@@ -331,7 +332,7 @@ static void CodeGen_ForLoop(AST_Statement_For* stmt, Scope* scope)
     Stack_Align();
 
     OutWrite("jmp for_loop%u\n", forLoopId);
-    OutWrite("nop\n");
+    //OutWrite("nop\n");
     OutWrite("for_break%u:\n", forLoopId);
 
     Stack_SetOffset(spOffsetPostCond);
@@ -458,7 +459,7 @@ static void CodeGen_SwitchCase(AST_Statement_Switch* stmt, Scope* scope)
         }
 
         // Otherwise the last jump might not work if it adds 0
-        OutWrite("nop\n");
+        //OutWrite("nop\n");
 
         for (size_t j = 0; j < stmt->numCases; j++)
         {
@@ -684,7 +685,7 @@ static void CodeGen_Break(AST_Statement* stmt)
     else if (n < 0)
         OutWrite("add sp, %i\n", -n);
 
-    OutWrite("jmp %s\nnop\n", loopState.currentBreakLabel);
+    OutWrite("jmp %s\n", loopState.currentBreakLabel);
 }
 
 static void CodeGen_Continue(AST_Statement* stmt)
@@ -700,7 +701,7 @@ static void CodeGen_Continue(AST_Statement* stmt)
     if (n < 0)
         OutWrite("add sp, %i\n", -n);
 
-    OutWrite("jmp %s\nnop\n", &loopState.currentContinueLabel);
+    OutWrite("jmp %s\n", &loopState.currentContinueLabel);
 }
 
 void CodeGen_InlineAssembly(AST_Statement_ASM* stmt, Scope* scope)

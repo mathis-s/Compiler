@@ -1,6 +1,7 @@
 #include "Optimizer.h"
 #include "AST.h"
 #include "GenericList.h"
+#include "Token.h"
 #include "Type.h"
 #include "Util.h"
 #include "Value.h"
@@ -28,8 +29,8 @@ typedef struct Optimizer_Scope Optimizer_Scope;
 typedef struct Optimizer_Loop Optimizer_Loop;
 #endif
 #ifdef CUSTOM_COMP
-struct Optimizer_Scope;
-struct Optimizer_Loop;
+typedef struct Optimizer_Scope {} Optimizer_Scope;
+typedef struct Optimizer_Loop {} Optimizer_Loop;
 #endif
 typedef struct Optimizer_Scope
 {
@@ -50,14 +51,22 @@ Optimizer_Loop* curLoop = NULL;
 
 void Optimizer_LogDeclaration(AST_Statement_Declaration* declaration)
 {
-    Optimizer_Variable v = {
-        declaration->variableName, 0, 0, loopLevel, NULL, declaration->variableType->pointerLevel > 1, declaration};
+    Optimizer_Variable* v = malloc(sizeof(Optimizer_Variable));
+    v->id = declaration->variableName;
+    v->lastScore = 0;
+    v->currentScore = 0;
+    v->definedAtLoopLevel = loopLevel;
+    v->lastAccess = NULL;
+    v->isPointer = (declaration->variableType->token == PointerToken);
+    v->declaration = declaration;
+
     GenericList_Append(&curScope->variables, &v);
 }
 
 static bool CompareVarToStr(const void* var, const void* id)
 {
-    return strcmp(((Optimizer_Variable*)var)->id, id) == 0;
+    Optimizer_Variable** v = (Optimizer_Variable**)var;
+    return strcmp((*v)->id, id) == 0;
 }
 
 void Optimizer_LogAccess(AST_Expression_VariableAccess* access)
@@ -68,9 +77,11 @@ void Optimizer_LogAccess(AST_Expression_VariableAccess* access)
     Optimizer_Scope* scope = curScope;
     do
     {
-        Optimizer_Variable* var = GenericList_Find(&scope->variables, CompareVarToStr, access->id);
-        if (var != NULL)
+        Optimizer_Variable** varP = (Optimizer_Variable**)GenericList_Find(&scope->variables, CompareVarToStr, access->id);
+        if (varP != NULL)
         {
+            Optimizer_Variable* var = *varP;
+
             if (curLoop != NULL && var->definedAtLoopLevel < loopLevel)
                 GenericList_Append(&curLoop->accessedVars, &var);
 
@@ -79,7 +90,8 @@ void Optimizer_LogAccess(AST_Expression_VariableAccess* access)
                 int score = 1;
                 if (var->isPointer)
                     score = 2;
-                var->currentScore += score << (3 * (loopLevel - var->definedAtLoopLevel));
+                int shamt = (3 * (loopLevel - var->definedAtLoopLevel));
+                var->currentScore += score << shamt;
             }
 
             // Actually in this order, last score is the score after the last access
@@ -104,9 +116,12 @@ void Optimizer_LogFunctionCall(uint16_t modifiedRegisters)
 
         for (size_t i = 0; i < scope->variables.count; i++)
         {
-            Optimizer_Variable* var = GenericList_At(&scope->variables, i);
+            Optimizer_Variable* var = *(Optimizer_Variable**)GenericList_At(&scope->variables, i);
             if (var->currentScore != (int16_t)0x8000)
-                var->currentScore -= 2 << (3 * (loopLevel - var->definedAtLoopLevel));
+            {
+                int shamt = (3 * (loopLevel - var->definedAtLoopLevel));
+                var->currentScore -= 2 << shamt;
+            }
         }
     } while ((scope = scope->parent) != NULL);
 }
@@ -116,7 +131,7 @@ void Optimizer_EnterNewScope()
     Optimizer_Scope* new = xmalloc(sizeof(Optimizer_Scope));
     memset(&new->preferredRegisters[0], 0xFF, 8 * sizeof(uint16_t));
     new->parent = curScope;
-    new->variables = GenericList_Create(sizeof(Optimizer_Variable));
+    new->variables = GenericList_Create(sizeof(Optimizer_Variable*));
     curScope = new;
 }
 
@@ -124,7 +139,7 @@ void Optimizer_ExitScope(uint16_t* const oPrefRegisters)
 {
     for (size_t i = 0; i < curScope->variables.count; i++)
     {
-        Optimizer_Variable* var = GenericList_At(&curScope->variables, i);
+        Optimizer_Variable* var = *(Optimizer_Variable**)GenericList_At(&curScope->variables, i);
         AST_Statement_Declaration* decl = var->declaration;
 
         decl->lastAccess = var->lastAccess;
@@ -136,6 +151,8 @@ void Optimizer_ExitScope(uint16_t* const oPrefRegisters)
             decl->variableType->qualifiers |= Qualifier_OptimizerRegister;
         else
             decl->variableType->qualifiers |= Qualifier_OptimizerStack;
+
+        free(var);
     }
 
     memcpy(oPrefRegisters, &curScope->preferredRegisters[0], 8 * sizeof(uint16_t));
@@ -163,9 +180,10 @@ void Optimizer_LogAddrOf(const char* idOfDerefdVar)
     Optimizer_Scope* scope = curScope;
     do
     {
-        Optimizer_Variable* var = GenericList_Find(&scope->variables, CompareVarToStr, idOfDerefdVar);
-        if (var != NULL)
+        Optimizer_Variable** varP = ((Optimizer_Variable**)GenericList_Find(&scope->variables, CompareVarToStr, idOfDerefdVar));
+        if (varP != NULL)
         {
+            Optimizer_Variable* var = *varP;
             var->currentScore = (int16_t)0x8000;
             var->lastScore = (int16_t)0x8000;
             return;
@@ -198,7 +216,7 @@ void Optimizer_LogInlineASM(void* asmNode)
     {
         for (size_t i = 0; i < scope->variables.count; i++)
         {
-            Optimizer_Variable* var = GenericList_At(&scope->variables, i);
+            Optimizer_Variable* var = *(Optimizer_Variable**)GenericList_At(&scope->variables, i);
             var->lastScore = var->currentScore;
             var->lastAccess = asmNode;
         }

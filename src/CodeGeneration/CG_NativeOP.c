@@ -1,8 +1,8 @@
 #include "CG_NativeOP.h"
 
-const bool isCommutative[] = {true,  false, true, false, true,  true,  true,
+const bool isCommutative[14] = {true,  false, true, false, true,  true,  true,
                               false, false, true, true,  false, false, false};
-const char* nativeOpToOpcode[] = {"add", "sub", "mul",  "div",  "and",  "or",  "xor",
+const char* nativeOpToOpcode[14] = {"add", "sub", "mul",  "and",  "div",  "or",  "xor",
                                   "shl", "shr", "mulh", "mulq", "invq", "mov", "not"};
 
 typedef enum
@@ -21,6 +21,7 @@ typedef enum
     SP,
     Addr_None,
 } UsedAddr;
+
 bool IsValidOperation(const Value* dst, const Value* srcA, const Value* srcB)
 {
     bool threeOperands = false;
@@ -33,7 +34,7 @@ bool IsValidOperation(const Value* dst, const Value* srcA, const Value* srcB)
     UsedAddr addr = Addr_None;
     uint16_t usedLiteral = 0;
 
-    const Value* operands[] = {srcA, srcB, dst};
+    const Value* operands[3] = {srcA, srcB, dst};
 
     size_t len = 2;
     if (threeOperands)
@@ -120,8 +121,13 @@ void GenerateValidOperation(const Value* dst, const Value* srcA, const Value* sr
 
 void GenerateNativeOP(NativeOP op, Value* oValue, Value left, Value right, bool leftReadOnly, bool rightReadOnly)
 {
-
     assert(op >= 0 && op <= NativeOP_Not);
+
+    if (left.addressType == AddressType_Literal && left.address == 0)
+        left = Value_FromRegister(-1);
+    if (right.addressType == AddressType_Literal && right.address == 0)
+        right = Value_FromRegister(-1);
+
     bool usingRequestedOutputValue = false;
     // If a destination has been requested, we use that, unless it is a flag.
     // Otherwise, we try to reuse one of the src values as dst,
@@ -129,12 +135,15 @@ void GenerateNativeOP(NativeOP op, Value* oValue, Value left, Value right, bool 
     // we allocate a new register.
     if (oValue->addressType == AddressType_None || oValue->addressType == AddressType_Flag)
     {
-        if (!leftReadOnly && left.addressType != AddressType_Literal && left.addressType != AddressType_MemoryRegister)
+        if (!leftReadOnly && left.addressType != AddressType_Literal &&
+            left.addressType != AddressType_MemoryRegister &&
+            !(left.addressType == AddressType_Register && left.address == -1))
         {
             *oValue = left;
         }
         else if (!rightReadOnly && isCommutative[op] && right.addressType != AddressType_Literal &&
-                 right.addressType != AddressType_MemoryRegister)
+                 right.addressType != AddressType_MemoryRegister &&
+                 !(right.addressType == AddressType_Register && right.address == -1))
         {
             Value temp = left;
             left = right;

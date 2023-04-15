@@ -35,15 +35,25 @@ typedef enum
     RBrClose,
     CBrOpen,
     CBrClose,
-    ABrOpen,
+    UNUSED, // ABrOpen
     ABrClose,
     Semicolon,
+    
+    // Purely UnOp tokens
+    BitwiseNOT,
+    LogicalNOT,
 
+    Increment,
+    Decrement,
+    
+    // BinOp or UnOp tokens
     Plus,
     Minus,
     Star,
-    Slash,
     Ampersand,
+
+    // Purely BinOp tokens
+    Slash,
     BitwiseOR,
     BitwiseXOR,
     ShiftLeft,
@@ -52,7 +62,7 @@ typedef enum
     LogicalAND,
     LogicalOR,
 
-    UNUSED,
+    ABrOpen,
 
     Dot,
     Arrow,
@@ -67,26 +77,21 @@ typedef enum
     AssignmentAdd,
     AssignmentSub,
     AssignmentMul,
-    AssignmentDiv,
     AssignmentAND,
+    AssignmentDiv,
     AssignmentOR,
     AssignmentXOR,
     AssignmentShiftLeft,
     AssignmentShiftRight,
     AssignmentMod,
-    Assignment,
-
-    BitwiseNOT,
-    LogicalNOT,
-
-    // BitwiseAND, (Ampersand)
-
-    Increment,
-    Decrement,
-
-    Comma,
-    Colon,
+    Assignment,    
+    
+    // TernaryOp token
     QuestionMark,
+    
+    // Various
+    Colon,
+    Comma,
     DotDotDot,
 
     Identifier,
@@ -106,6 +111,7 @@ typedef enum
     // as variable type.
     ArrayToken,
     FunctionPointerToken,
+    PointerToken,
 } TokenType;
 
 typedef struct
@@ -152,8 +158,8 @@ void Token_AppendArray(Token t, TokenArray* array, uint16_t lineNumber, char* so
 SourceLocation Token_GetLocation(size_t tokenIndex);
 SourceLocation Token_GetLocationP(const Token* token);
 
-void PopNext(size_t* i, TokenType type);
-void PopNextInc(size_t* i, TokenType type);
-void PopCur(size_t* i, TokenType type);
+void* PopNext(size_t* i, TokenType type);
+void* PopNextInc(size_t* i, TokenType type);
+void* PopCur(size_t* i, TokenType type);
 void Inc(size_t* i);
 void Token_SetTokenArray(const TokenArray* t);

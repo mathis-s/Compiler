@@ -11,8 +11,8 @@ typedef enum
     BinOp_Add = 0,
     BinOp_Sub,
     BinOp_Mul,
-    BinOp_Div,
     BinOp_And,
+    BinOp_Div,
     BinOp_Or,
     BinOp_Xor,
     BinOp_ShiftLeft,
@@ -33,8 +33,8 @@ typedef enum
     BinOp_AssignmentAdd,
     BinOp_AssignmentSub,
     BinOp_AssignmentMul,
-    BinOp_AssignmentDiv,
     BinOp_AssignmentAND,
+    BinOp_AssignmentDiv,
     BinOp_AssignmentOR,
     BinOp_AssignmentXOR,
     BinOp_AssignmentShiftLeft,
@@ -52,15 +52,19 @@ typedef enum
 
 typedef enum
 {
-    UnOp_PreIncrement,
-    UnOp_PostIncrement,
-    UnOp_PreDecrement,
-    UnOp_PostDecrement,
-    UnOp_LogicalNOT,
     UnOp_BitwiseNOT,
+    UnOp_LogicalNOT,
+
+    UnOp_PreIncrement,
+    UnOp_PreDecrement,
+
+    UnOp_Plus,
     UnOp_Negate,
     UnOp_Dereference,
     UnOp_AddressOf,
+
+    UnOp_PostIncrement,
+    UnOp_PostDecrement,
 } UnOp;
 
 typedef enum
@@ -71,6 +75,7 @@ typedef enum
     AST_ExpressionType_TypeCast,
     AST_ExpressionType_UnaryOP,
     AST_ExpressionType_BinaryOP,
+    AST_ExpressionType_TernaryOP,
     AST_ExpressionType_FunctionCall,
     AST_ExpressionType_VariableAccess,
     AST_ExpressionType_Value,
@@ -92,6 +97,15 @@ typedef struct
     AST_Expression* exprA;
     AST_Expression* exprB;
 } AST_Expression_BinOp;
+
+typedef struct
+{
+    AST_ExpressionType type;
+    SourceLocation loc;
+    AST_Expression* cond;
+    AST_Expression* exprA;
+    AST_Expression* exprB;
+} AST_Expression_TernaryOp;
 
 typedef struct
 {

@@ -23,7 +23,7 @@ GenericList GenericList_CreateCopy(GenericList original);
 // Copies memberSize words from member into list. Returns address of data in list.
 void* GenericList_Append(GenericList* this, void* member);
 
-void* GenericList_At(GenericList* this, size_t index);
+void* GenericList_At(const GenericList* this, size_t index);
 
 // Find an object in this List based on a generic comparator. Left side in comparator(void*, void*)
 // is object pointer in list, right side is always compareTo.

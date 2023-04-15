@@ -2,7 +2,7 @@
 #include <assert.h>
 #include <stdlib.h>
 
-static const char* flagToString[] = {
+static const char* flagToString[8] = {
     "_nz", "_z", "_np", "_p", "_ns", "_s", "_nc", "_c",
 };
 

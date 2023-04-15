@@ -1,7 +1,13 @@
 #pragma once
 #include "GenericList.h"
-#include "Type.h"
 #include <stdint.h>
+
+#ifndef CUSTOM_COMP
+typedef struct VariableType VariableType;
+#endif
+#ifdef CUSTOM_COMP
+typedef struct VariableType {} VariableType;
+#endif
 
 typedef struct Function
 {

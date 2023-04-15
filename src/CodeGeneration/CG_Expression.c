@@ -1,4 +1,5 @@
 #include <math.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -105,13 +106,14 @@ void CodeGen_TypeCast(AST_Expression_TypeCast* expr, Scope* scope, Value* oValue
     if (oValue == NULL)
         return;
 
-    // TODO add conversion functions from and to fixed.
+    // TODO add conversion functions from and to fixed or 32-bit
     Value outValue = NullValue;
     VariableType* outType = NULL;
     bool outReadOnly;
     CodeGen_Expression(expr->exprA, scope, &outValue, &outType, &outReadOnly);
 
     int newSize = SizeInWords(expr->newType);
+    int delta = outValue.size - newSize;
     if (outType->token != None && (IsPrimitiveType(expr->newType) ^ IsPrimitiveType(outType)))
         ErrorAtLocation("Invalid type cast", expr->loc);
 
@@ -126,30 +128,41 @@ void CodeGen_TypeCast(AST_Expression_TypeCast* expr, Scope* scope, Value* oValue
         if (Function_GetCurrent() == NULL)
             ErrorAtLocation("Expected compile-time constant", expr->loc);
 
-        if (outReadOnly)
+        if (oValue->addressType != AddressType_None && oValue->addressType != AddressType_Flag)
         {
-            // if (IsPrimitiveType(expr->newType))
+            assert(oValue->size == newSize);
+            Value_GenerateMemCpy(*oValue, outValue);
+            if (!outReadOnly)
+                Value_FreeValue(&outValue);
+            *oReadOnly = true;
+        }
+        else if (outReadOnly)
+        {
+            if (newSize <= outValue.size && outValue.addressType == AddressType_Memory)
+            {
+                *oValue = Value_Memory((int)outValue.address, newSize);
+                *oReadOnly = true;
+            }
+            else if (newSize <= outValue.size && outValue.addressType == AddressType_MemoryRelative)
+            {
+                *oValue = Value_MemoryRelative((int)outValue.address, newSize);
+                *oReadOnly = true;
+            }
+            else if (newSize <= outValue.size && outValue.addressType == AddressType_MemoryRegister)
+            {
+                *oValue = outValue;
+                oValue->size = newSize;
+                *oReadOnly = true;
+            }
+            else
             {
                 *oValue = Value_Register(newSize);
                 Value_GenerateMemCpy(*oValue, outValue);
 
                 if (newSize == 2 && outValue.size == 1)
                     OutWrite("mov r%i, 0\n", Value_GetR1(oValue));
+                *oReadOnly = false;
             }
-            /*else
-            {
-                int delta = outValue.size - newSize;
-                switch (outValue.addressType)
-                {
-                    case AddressType_Memory:
-                        *oValue = Value_Memory(outValue.address + delta, newSize);
-                        break;
-                    case AddressType_MemoryRelative:
-                        *oValue = Value_Memory(outValue.address - delta, newSize);
-                        break;
-                }
-            }*/
-            *oReadOnly = false;
         }
         else
         {
@@ -168,10 +181,31 @@ void CodeGen_TypeCast(AST_Expression_TypeCast* expr, Scope* scope, Value* oValue
             }
             else
             {
-                *oValue = Value_Register(newSize);
-                Value_GenerateMemCpy(*oValue, outValue);
-                Value_FreeValue(&outValue);
-                *oReadOnly = false;
+                if (newSize <= outValue.size && outValue.addressType == AddressType_Memory)
+                {
+                    *oValue = Value_Memory((int)outValue.address, newSize);
+                    *oReadOnly = false;
+                }
+                else if (newSize <= outValue.size && outValue.addressType == AddressType_MemoryRelative)
+                {
+                    *oValue = Value_MemoryRelative((int)outValue.address, newSize);
+                    *oReadOnly = false;
+                }
+                else if (newSize <= outValue.size && outValue.addressType == AddressType_MemoryRegister)
+                {
+                    *oValue = outValue;
+                    oValue->size = newSize;
+                    *oReadOnly = false;
+                }
+                else
+                {
+                    *oValue = Value_Register(newSize);
+                    Value_GenerateMemCpy(*oValue, outValue);
+
+                    if (newSize == 2 && outValue.size == 1)
+                        OutWrite("mov r%i, 0\n", Value_GetR1(oValue));
+                    *oReadOnly = false;
+                }
             }
         }
     }
@@ -191,9 +225,12 @@ void CodeGen_FunctionCall(const AST_Expression_FunctionCall* expr, Scope* scope,
     Variable* funcPointer = NULL;
     Function* outFunc = NULL;
 
-    if ((funcPointer = Scope_FindVariable(scope, expr->id)) != NULL && funcPointer->type->token == FunctionPointerToken)
+    if ((funcPointer = Scope_FindVariable(scope, expr->id)) != NULL && funcPointer->type->token == PointerToken &&
+        ((VariableTypePtr*)funcPointer->type)->baseType->token == FunctionPointerToken)
     {
-        outFunc = funcPointer->type->structure;
+        VariableTypeFunctionPointer* fptrType =
+            (VariableTypeFunctionPointer*)((VariableTypePtr*)funcPointer->type)->baseType;
+        outFunc = &fptrType->func;
     }
     else if ((outFunc = Function_Find(expr->id)) == NULL)
         ErrorAtLocation("Undefined identifier!", expr->loc);
@@ -204,9 +241,9 @@ void CodeGen_FunctionCall(const AST_Expression_FunctionCall* expr, Scope* scope,
     int numAllocForPushing = Registers_GetNumUsedMasked(outFunc->modifiedRegisters);
     if (oValue != NULL && oValue->addressType == AddressType_Register)
     {
-        if (outFunc->modifiedRegisters & Value_GetR0(oValue))
+        if (numAllocForPushing != 0 && outFunc->modifiedRegisters & Value_GetR0(oValue))
             numAllocForPushing--;
-        if (oValue->size == 2 && outFunc->modifiedRegisters & Value_GetR1(oValue))
+        if (numAllocForPushing != 0 && oValue->size == 2 && outFunc->modifiedRegisters & Value_GetR1(oValue))
             numAllocForPushing--;
     }
     // Up
@@ -298,8 +335,6 @@ void CodeGen_FunctionCall(const AST_Expression_FunctionCall* expr, Scope* scope,
 
         parameterIndex++;
         Type_RemoveReference(parType);
-        // if ()
-        //     printf("%s %u %s\n", expr->loc.sourceFile, expr->loc.lineNumber, outFunc->identifier);
     }
 
     free(expr->parameters);
@@ -379,7 +414,7 @@ void CodeGen_FunctionCall(const AST_Expression_FunctionCall* expr, Scope* scope,
         OutWrite("jmp _%s\n", expr->id);
     }
 
-    OutWrite("nop\n");
+    // OutWrite("nop\n");
 
     // curStackPointerOffset -= numUsed;
 
@@ -404,9 +439,6 @@ void CodeGen_FunctionCall(const AST_Expression_FunctionCall* expr, Scope* scope,
         Value_GenerateMemCpy(*oValue, (Value){(int32_t)sizeOfRetval, AddressType_MemoryRelative, sizeOfRetval});
     }
 
-    // We waste some stack space by not cleaning up the stack
-    // when a function returns something large (eg a struct) on it.
-    // Advantage is that we don't have to copy the return value.
     if (sizeOfRetval > 0 && !IsPrimitiveType(outFunc->returnType) && oValue != NULL)
     {
         if (numPushed > 0)
@@ -418,11 +450,19 @@ void CodeGen_FunctionCall(const AST_Expression_FunctionCall* expr, Scope* scope,
         *oReadOnly = false;
         Value_GenerateMemCpy(*oValue, Value_MemoryRelative(sizeOfRetval, sizeOfRetval));
 
-        Stack_OffsetSize(-(allocatedSizeInWords - sizeOfRetval));
+        /*Stack_OffsetSize(-(allocatedSizeInWords - sizeOfRetval));
         Stack_Offset(allocatedSizeInWords - sizeOfRetval);
 
         Stack_OffsetSize(-numAllocForPushing);
-        Stack_Offset(numAllocForPushing);
+        Stack_Offset(numAllocForPushing);*/
+
+        int stackOffset = -(numAllocForPushing + allocatedSizeInWords - sizeOfRetval);
+
+        Stack_OffsetSize(stackOffset);
+        Stack_Offset(-stackOffset);
+
+        ShiftAddressSpace(scope, stackOffset);
+        oValue->address += (int32_t)stackOffset;
     }
     else
     {
@@ -493,13 +533,106 @@ void CodeGen_VariableAccess(AST_Expression_VariableAccess* expr, Scope* scope, V
     ErrorAtLocation("Undefined reference", expr->loc);
 }
 
+void CodeGen_TernaryOp(AST_Expression_TernaryOp* expr, Scope* scope, Value* oValue, VariableType** oType,
+                       bool* oReadOnly)
+{
+    int ternId = GetLabelID();
+
+    Value outValue = FlagValue;
+    bool outReadOnly;
+    CodeGen_Expression(expr->cond, scope, &outValue, NULL, &outReadOnly);
+
+    if (outValue.addressType == AddressType_Flag)
+        OutWrite("jmp%s else%u\n", Flags_FlagToString(Flags_Invert((Flag)outValue.address)), ternId);
+    else
+    {
+        Value_ToFlag(&outValue);
+        OutWrite("jmp_z else%u\n", ternId);
+    }
+
+    if (!outReadOnly)
+        Value_FreeValue(&outValue);
+
+    int spOffsetPostCond = Stack_GetOffset();
+    int stackSizePostCond = Stack_GetSize();
+
+    // Condition True
+    VariableType* leftType;
+    Value leftValue = NullValue;
+
+    if (oValue && oValue->addressType != AddressType_None)
+        leftValue = *oValue;
+
+    bool leftReadOnly;
+    CodeGen_Expression(expr->exprA, scope, &leftValue, &leftType, &leftReadOnly);
+
+    if (!(oValue != NULL && Value_Equals(oValue, &leftValue)) &&
+        (leftReadOnly || leftValue.addressType == AddressType_Literal))
+    {
+        Value newValue;
+        if (IsPrimitiveType(leftType))
+            newValue = Value_Register(leftValue.size);
+        else
+            newValue = GetValueOnStack(leftValue.size, scope);
+
+        Value_GenerateMemCpy(newValue, leftValue);
+        leftValue = newValue;
+    }
+
+    int spOffsetPostLeft = Stack_GetOffset();
+    int stackSizePostLeft = Stack_GetSize();
+
+    Stack_ToAddress(-spOffsetPostCond);
+
+    OutWrite("jmp n_else%u\n", ternId);
+    OutWrite("else%u:\n", ternId);
+    Stack_SetOffset(spOffsetPostCond);
+    Stack_SetSize(stackSizePostCond);
+
+    // Condition False
+    VariableType* rightType;
+    Value rightValue = NullValue;
+
+    if (leftValue.addressType != AddressType_None)
+        rightValue = leftValue;
+
+    bool rightReadOnly;
+    CodeGen_Expression(expr->exprB, scope, &rightValue, &rightType, &rightReadOnly);
+
+    Value_GenerateMemCpy(leftValue, rightValue);
+
+    if (!rightReadOnly && !(oValue != NULL && Value_Equals(oValue, &rightValue)))
+        Value_FreeValue(&rightValue);
+
+    Type_Check(leftType, rightType);
+    Type_RemoveReference(rightType);
+
+    if (oType != NULL)
+        *oType = leftType;
+    else
+        Type_RemoveReference(leftType);
+
+    Stack_ToAddress(-spOffsetPostLeft);
+
+    OutWrite("n_else%u:\n", ternId);
+
+    Stack_SetOffset(spOffsetPostLeft);
+    Stack_SetSize(stackSizePostLeft);
+
+    if (oValue)
+        *oValue = leftValue;
+    else
+        Value_FreeValue(&leftValue);
+
+    if (oReadOnly)
+        *oReadOnly = false;
+}
+
 void FreeExpressionTree(AST_Expression* expr, Scope* scope)
 {
     switch (expr->type)
     {
-        case AST_ExpressionType_UnaryOP:
-            FreeExpressionTree(((AST_Expression_UnOp*)expr)->exprA, scope);
-            break;
+        case AST_ExpressionType_UnaryOP: FreeExpressionTree(((AST_Expression_UnOp*)expr)->exprA, scope); break;
         case AST_ExpressionType_BinaryOP:;
             AST_Expression_BinOp* binop = ((AST_Expression_BinOp*)expr);
             FreeExpressionTree(binop->exprA, scope);
@@ -521,9 +654,7 @@ void FreeExpressionTree(AST_Expression* expr, Scope* scope)
             for (size_t i = 0; i < list->numExpr; i++)
                 FreeExpressionTree(list->expressions[i], scope);
             break;
-        case AST_ExpressionType_TypeCast:
-            FreeExpressionTree(((AST_Expression_TypeCast*)expr)->exprA, scope);
-            break;
+        case AST_ExpressionType_TypeCast: FreeExpressionTree(((AST_Expression_TypeCast*)expr)->exprA, scope); break;
         case AST_ExpressionType_VariableAccess:;
             // The variable itself might get freed by the expression if this is the last time
             // it is used. Therefore when freeing the tree we also have to check if the variable
@@ -546,8 +677,7 @@ void CodeGen_Expression(AST_Expression* expr, Scope* scope, Value* oValue, Varia
     if (Function_GetCurrent() == NULL)
         switch (expr->type)
         {
-            default:
-                ErrorAtLocation("Expected compile time constant", expr->loc);
+            default: ErrorAtLocation("Expected compile time constant", expr->loc);
             case AST_ExpressionType_IntLiteral:
             case AST_ExpressionType_VariableAccess:
             case AST_ExpressionType_StringLiteral:
@@ -570,13 +700,14 @@ void CodeGen_Expression(AST_Expression* expr, Scope* scope, Value* oValue, Varia
         case AST_ExpressionType_StringLiteral:
             if (oType != NULL)
             {
-                VariableType* type = xmalloc(sizeof(VariableType));
-                type->token = UintKeyword;
+                VariableTypePtr* type = xmalloc(sizeof(VariableTypePtr));
+                type->token = PointerToken;
                 type->refCount = 1;
-                type->structure = NULL;
-                type->pointerLevel = 1;
-                type->qualifiers |= Qualifier_Const;
-                *oType = type;
+                type->qualifiers = Qualifier_Const;
+
+                type->baseType = Type_AddReference(&MachineUIntType);
+
+                *oType = (VariableType*)type;
             }
             if (oValue != NULL)
             {
@@ -599,6 +730,9 @@ void CodeGen_Expression(AST_Expression* expr, Scope* scope, Value* oValue, Varia
                 *oType = exprVal->vType;
             break;
         }
+        case AST_ExpressionType_TernaryOP:
+            CodeGen_TernaryOp((AST_Expression_TernaryOp*)expr, scope, oValue, oType, oReadOnly);
+            break;
         case AST_ExpressionType_VariableAccess:
             CodeGen_VariableAccess((AST_Expression_VariableAccess*)expr, scope, oValue, oType, oReadOnly);
             break;

@@ -71,14 +71,12 @@ Function Function_Create(char* identifier, VariableType* returnType)
 
 void Function_Dispose(Function* this)
 {
-    for (size_t i = 0; i < this->parameters.count; i++)
+    /*for (size_t i = 0; i < this->parameters.count; i++)
     {
         Variable* v = GenericList_At(&this->parameters, i);
-        if (v->type->token == FunctionPointerToken)
-            Function_Dispose(v->type->structure);
-        else if (v->type->token == ArrayToken)
-            free(v->type->structure);
+        Type_RemoveReference(v->type);
     }
     GenericList_Dispose(&this->parameters);
-    free(this);
+
+    free(this);*/
 }

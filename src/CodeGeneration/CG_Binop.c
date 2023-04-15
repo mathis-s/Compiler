@@ -11,6 +11,7 @@
 #include "CG_Expression.h"
 #include "CG_NativeOP.h"
 
+#include <malloc.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -23,6 +24,18 @@ void CodeGen_StructMemberAccess(AST_Expression_BinOp* expr, Scope* scope, Value*
     bool structReadOnly;
     CodeGen_Expression(expr->exprA, scope, &structValue, &structType, &structReadOnly);
 
+    bool isStructPtr = false;
+    if (structType->token == PointerToken)
+    {
+        isStructPtr = true;
+        VariableType* baseType = Type_AddReference(((VariableTypePtr*)structType)->baseType);
+        Type_RemoveReference(structType);
+        structType = baseType;
+    }
+
+    if (structType->token != StructKeyword)
+        ErrorAtLocation("Invalid struct access", expr->loc);
+
     if (expr->exprB->type != AST_ExpressionType_VariableAccess)
         ErrorAtLocation("Invalid struct member", expr->exprB->loc);
 
@@ -30,7 +43,8 @@ void CodeGen_StructMemberAccess(AST_Expression_BinOp* expr, Scope* scope, Value*
     if (memberExpr->type != AST_ExpressionType_VariableAccess)
         ErrorAtLocation("Invalid struct access", expr->loc);
 
-    Struct* outStruct = structType->structure;
+    assert(malloc_usable_size(structType) >= sizeof(VariableTypeStruct));
+    Struct* outStruct = ((VariableTypeStruct*)structType)->str;
     assert(outStruct != NULL);
 
     Variable* outStructMemberVar = NULL;
@@ -42,8 +56,7 @@ void CodeGen_StructMemberAccess(AST_Expression_BinOp* expr, Scope* scope, Value*
     if (oValue == NULL)
     {
         bool err;
-        if ((structType->pointerLevel == 0 && expr->op == BinOp_StructAccessDot) ||
-            (structType->pointerLevel == 1 && expr->op == BinOp_StructAccessArrow))
+        if ((!isStructPtr && expr->op == BinOp_StructAccessDot) || (isStructPtr && expr->op == BinOp_StructAccessArrow))
         {
             err = false;
         }
@@ -66,7 +79,7 @@ void CodeGen_StructMemberAccess(AST_Expression_BinOp* expr, Scope* scope, Value*
         *oType = Type_AddReference(outStructMemberVar->type);
 
     // Struct access via dot
-    if (structType->pointerLevel == 0 && expr->op == BinOp_StructAccessDot)
+    if (!isStructPtr && expr->op == BinOp_StructAccessDot)
     {
         Value srcValue;
         if (structValue.addressType == AddressType_MemoryRelative)
@@ -133,7 +146,7 @@ void CodeGen_StructMemberAccess(AST_Expression_BinOp* expr, Scope* scope, Value*
     }
 
     // Struct pointer access via ->
-    else if (structType->pointerLevel == 1 && expr->op == BinOp_StructAccessArrow)
+    else if (isStructPtr && expr->op == BinOp_StructAccessArrow)
     {
         Value addr = NullValue;
 
@@ -183,10 +196,14 @@ void CodeGen_Assignment(AST_Expression_BinOp* expr, Scope* scope, Value* oValue,
     Value leftVal = NullValue;
     bool leftReadOnly = true;
     VariableType* leftType = NULL;
-    bool isNotVariableAccess = (expr->exprA->type != AST_ExpressionType_VariableAccess);
+    bool isNotAccess = (expr->exprA->type != AST_ExpressionType_VariableAccess) &&
+                       (expr->exprA->type != AST_ExpressionType_BinaryOP ||
+                        ((((AST_Expression_BinOp*)expr->exprA)->op != BinOp_StructAccessDot) &&
+                         (((AST_Expression_BinOp*)expr->exprA)->op != BinOp_ArrayAccess)));
+                         
     CodeGen_Expression(expr->exprA, scope, &leftVal, &leftType, &leftReadOnly);
 
-    if (!leftReadOnly && leftVal.addressType != AddressType_MemoryRegister && isNotVariableAccess)
+    if (!leftReadOnly && leftVal.addressType != AddressType_MemoryRegister && isNotAccess)
         ErrorAtLocation("Cannot assign rvalue", expr->loc);
 
     if (oType != NULL)
@@ -308,8 +325,19 @@ void BinopAdd32(Value* dstValue, Value* srcA, Value* srcB, bool srcAro, bool src
     Value srcBLow = Value_GetLowerWord(srcB);
     Value srcBHigh = Value_GetUpperWord(srcB, &srcBHighRO);
 
-    Value dstLow = Value_GetLowerWord(dstValue);
-    Value dstHigh = Value_GetUpperWord(dstValue, &dstHighRO);
+    Value dstLow; 
+    Value dstHigh;
+    if (Value_Equals(dstValue, srcA))
+    {
+        dstLow = srcALow;
+        dstHigh = srcAHigh;
+        dstHighRO = false;
+    }
+    else
+    {
+        dstLow = Value_GetLowerWord(dstValue);
+        dstHigh = Value_GetUpperWord(dstValue, &dstHighRO);
+    }
 
     Value* carry;
     if (!srcAro && srcA->addressType == AddressType_Register)
@@ -598,7 +626,7 @@ void BinopDiv32(Value* dstValue, Value* srcA, Value* srcB, bool srcAro, bool src
     }
 }
 
-void BinopComparison(BinOp op, Value* dstValue, Value* srcA, Value* srcB, bool srcAro, VariableType* type)
+void BinopComparison(BinOp op, Value* dstValue, Value* srcA, Value* srcB, bool srcAro, bool srcBro, VariableType* type)
 {
     bool srcAHighRO;
     bool srcBHighRO;
@@ -608,6 +636,10 @@ void BinopComparison(BinOp op, Value* dstValue, Value* srcA, Value* srcB, bool s
         Value* temp = srcA;
         srcA = srcB;
         srcB = temp;
+
+        bool t = srcAro;
+        srcAro = srcBro;
+        srcBro = t;
     }
 
     // Zero Register as destination
@@ -689,9 +721,7 @@ void BinopComparison(BinOp op, Value* dstValue, Value* srcA, Value* srcB, bool s
             else
                 returnFlag = Flag_NS;
             break;
-        default:
-            assert(0);
-            break;
+        default: assert(0); break;
     }
 
     if (dstValue->addressType == AddressType_Flag)
@@ -879,18 +909,14 @@ void CodeGen_ArrayAccess(AST_Expression_BinOp* expr, Scope* scope, Value* oValue
         Type_RemoveReference(indexType);
         return;
     }
-    indexType = Type_Copy(indexType);
 
-    if (indexType->token == None)
-        indexType->token = UintKeyword;
-    if (indexValue.size != 1 || (indexType->token != UintKeyword && indexType->token != IntKeyword))
+    if (indexValue.size != 1 || (indexType->token != UintKeyword && indexType->token != IntKeyword && indexType->token != None))
         ErrorAtLocation("Invalid array indexing type!", expr->loc);
 
-    if (arrayType->pointerLevel > 0)
+    if (arrayType->token == PointerToken)
     {
-        arrayType->refCount++; // Reference is removed later
-        VariableType* memberType = Type_Copy(arrayType);
-        memberType->pointerLevel--;
+        VariableType* memberType = ((VariableTypePtr*)arrayType)->baseType;
+        // Type_AddReference(memberType);
 
         if (oType != NULL)
             *oType = Type_AddReference(memberType);
@@ -919,7 +945,6 @@ void CodeGen_ArrayAccess(AST_Expression_BinOp* expr, Scope* scope, Value* oValue
         oValue->addressType = AddressType_MemoryRegister;
         oValue->size = SizeInWords(memberType);
         *oReadOnly = false;
-        Type_RemoveReference(memberType);
     }
     else if (arrayType->token == ArrayToken)
     {
@@ -1031,10 +1056,9 @@ void CodeGen_LogicalAndOr(const AST_Expression_BinOp* expr, Scope* scope, Value*
                           bool* oReadOnly)
 {
     bool leftReadOnly;
-    Value left = NullValue;
+    Value left = Value_Flag(Flag_None);
     CodeGen_Expression(expr->exprA, scope, &left, NULL, &leftReadOnly);
-    Value boolean = NullValue;
-    if (leftReadOnly)
+    /*if (leftReadOnly)
     {
         boolean = Value_Register(1);
         Value_GenerateMemCpy(boolean, left);
@@ -1046,28 +1070,55 @@ void CodeGen_LogicalAndOr(const AST_Expression_BinOp* expr, Scope* scope, Value*
         boolean = Value_Register(1);
         Value_GenerateMemCpy(boolean, left);
         Value_FreeValue(&left);
+    }*/
+
+    if (left.addressType != AddressType_Flag)
+    {
+        Value_ToFlag(&left);
+        if (!leftReadOnly)
+            Value_FreeValue(&left);
+        left = Value_Flag(Flag_NZ);
     }
-    Value_ToFlag(&left);
+
+    Value boolean = Value_Register(1);
+
+    // These actually dont even need to be conditional, the branch handles it already.
+    if (expr->op == BinOp_LogicalAnd)
+        OutWrite("mov%s r%i, 0\n", Flags_FlagToString(Flags_Invert((Flag)left.address)), Value_GetR0(&boolean));
+    else
+        OutWrite("mov%s r%i, 1\n", Flags_FlagToString((Flag)left.address), Value_GetR0(&boolean));
+
     int id = GetLabelID();
 
+    int spOffsetPostCond = Stack_GetOffset();
+    int stackSizePostCond = Stack_GetSize();
+
     if (expr->op == BinOp_LogicalAnd)
-        OutWrite("jmp_z AND_END_%zi\nnop\n", id);
+        OutWrite("jmp%s AND_END_%zi\n", Flags_FlagToString(Flags_Invert((Flag)left.address)), id);
     else
-        OutWrite("jmp_nz OR_END_%zi\nnop\n", id);
+        OutWrite("jmp%s OR_END_%zi\n", Flags_FlagToString((Flag)left.address), id);
 
     bool rightReadOnly;
-    Value right = NullValue;
+    Value right = boolean;
 
     CodeGen_Expression(expr->exprB, scope, &right, NULL, &rightReadOnly);
-    Value_GenerateMemCpy(boolean, right);
 
-    if (!rightReadOnly)
-        Value_FreeValue(&right);
+    if (!Value_Equals(&right, &boolean))
+    {
+        if (!rightReadOnly)
+            Value_FreeValue(&right);
+        Value_GenerateMemCpy(boolean, right);
+    }
+
+    Stack_ToAddress(-spOffsetPostCond);
 
     if (expr->op == BinOp_LogicalAnd)
         OutWrite("AND_END_%u:\n", id);
     else
         OutWrite("OR_END_%u:\n", id);
+
+    Stack_SetOffset(spOffsetPostCond);
+    Stack_SetSize(stackSizePostCond);
 
     *oValue = boolean;
     if (oType != NULL)
@@ -1162,15 +1213,9 @@ void CodeGen_BinaryOperator(AST_Expression_BinOp* expr, Scope* scope, Value* oVa
 
         switch (expr->op)
         {
-            case BinOp_Add:
-                newLiteral = left.address + right.address;
-                break;
-            case BinOp_Sub:
-                newLiteral = left.address - right.address;
-                break;
-            case BinOp_Mul:
-                newLiteral = left.address * right.address;
-                break;
+            case BinOp_Add: newLiteral = left.address + right.address; break;
+            case BinOp_Sub: newLiteral = left.address - right.address; break;
+            case BinOp_Mul: newLiteral = left.address * right.address; break;
             case BinOp_Div:
 #ifndef CUSTOM_COMP
                 newLiteral = left.address / right.address;
@@ -1187,38 +1232,18 @@ void CodeGen_BinaryOperator(AST_Expression_BinOp* expr, Scope* scope, Value* oVa
                 newLiteral = (int32_t)(((int)left.address) % ((int)right.address));
 #endif
                 break;
-            case BinOp_GreaterThan:
-                newLiteral = (int32_t)(left.address > right.address);
-                break;
-            case BinOp_GreaterThanEq:
-                newLiteral = (int32_t)(left.address >= right.address);
-                break;
-            case BinOp_LessThan:
-                newLiteral = (int32_t)(left.address < right.address);
-                break;
-            case BinOp_LessThanEq:
-                newLiteral = (int32_t)(left.address <= right.address);
-                break;
+            case BinOp_GreaterThan: newLiteral = (int32_t)(left.address > right.address); break;
+            case BinOp_GreaterThanEq: newLiteral = (int32_t)(left.address >= right.address); break;
+            case BinOp_LessThan: newLiteral = (int32_t)(left.address < right.address); break;
+            case BinOp_LessThanEq: newLiteral = (int32_t)(left.address <= right.address); break;
             case BinOp_LogicalAnd:
-            case BinOp_And:
-                newLiteral = left.address & right.address;
-                break;
+            case BinOp_And: newLiteral = left.address & right.address; break;
             case BinOp_LogicalOr:
-            case BinOp_Or:
-                newLiteral = left.address | right.address;
-                break;
-            case BinOp_Xor:
-                newLiteral = left.address ^ right.address;
-                break;
-            case BinOp_ShiftLeft:
-                newLiteral = left.address << right.address;
-                break;
-            case BinOp_ShiftRight:
-                newLiteral = left.address >> right.address;
-                break;
-            default:
-                ErrorAtLocation("Invalid binop", expr->loc);
-                newLiteral = 0;
+            case BinOp_Or: newLiteral = left.address | right.address; break;
+            case BinOp_Xor: newLiteral = left.address ^ right.address; break;
+            case BinOp_ShiftLeft: newLiteral = left.address << right.address; break;
+            case BinOp_ShiftRight: newLiteral = left.address >> right.address; break;
+            default: ErrorAtLocation("Invalid binop", expr->loc); newLiteral = 0;
         }
 
         *oValue = Value_Literal(newLiteral);
@@ -1247,7 +1272,7 @@ void CodeGen_BinaryOperator(AST_Expression_BinOp* expr, Scope* scope, Value* oVa
 
             // Handle Binops that can store their result in flag
             if (expr->op >= BinOp_LessThan && expr->op <= BinOp_GreaterThanEq)
-                BinopComparison(expr->op, oValue, &left, &right, leftReadOnly, parameterType);
+                BinopComparison(expr->op, oValue, &left, &right, leftReadOnly, rightReadOnly, parameterType);
             else if (expr->op == BinOp_Equal || expr->op == BinOp_NotEqual)
                 BinopEquality(expr->op, oValue, &left, &right, leftReadOnly, rightReadOnly);
             else
@@ -1259,12 +1284,8 @@ void CodeGen_BinaryOperator(AST_Expression_BinOp* expr, Scope* scope, Value* oVa
                 switch (expr->op)
                 {
                     // TODO replace switches here with arrays.
-                    case BinOp_Add:
-                        BinopAdd32(oValue, &left, &right, leftReadOnly, rightReadOnly);
-                        break;
-                    case BinOp_Sub:
-                        BinopSub32(oValue, &left, &right, leftReadOnly);
-                        break;
+                    case BinOp_Add: BinopAdd32(oValue, &left, &right, leftReadOnly, rightReadOnly); break;
+                    case BinOp_Sub: BinopSub32(oValue, &left, &right, leftReadOnly); break;
                     case BinOp_Mul:
                         BinopMul32(oValue, &left, &right, leftReadOnly, rightReadOnly, parameterType);
                         break;
@@ -1273,20 +1294,11 @@ void CodeGen_BinaryOperator(AST_Expression_BinOp* expr, Scope* scope, Value* oVa
                         break;
                     case BinOp_Xor:
                     case BinOp_Or:
-                    case BinOp_And:
-                        BinopBitwise32(expr->op, oValue, &left, &right);
-                        break;
-                    case BinOp_Mod:
-                        BinopMod(oValue, &left, &right);
-                        break;
-                    case BinOp_ShiftLeft:
-                        BinopShiftLeft32(oValue, &left, &right);
-                        break;
-                    case BinOp_ShiftRight:
-                        BinopShiftRight32(oValue, &left, &right);
-                        break;
-                    default:
-                        ErrorAtLocation("Not implemented", expr->loc);
+                    case BinOp_And: BinopBitwise32(expr->op, oValue, &left, &right); break;
+                    case BinOp_Mod: BinopMod(oValue, &left, &right); break;
+                    case BinOp_ShiftLeft: BinopShiftLeft32(oValue, &left, &right); break;
+                    case BinOp_ShiftRight: BinopShiftRight32(oValue, &left, &right); break;
+                    default: ErrorAtLocation("Not implemented", expr->loc);
                 }
             }
 

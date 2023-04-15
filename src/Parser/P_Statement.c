@@ -151,7 +151,7 @@ static bool TryParseForLoop(TokenArray* t, size_t* i, Scope* scope, AST_Statemen
         *outExpr = retval;
         return true;
     }
-
+    
     return false;
 }
 
@@ -296,6 +296,12 @@ static bool TryParseDeclaration(TokenArray* t, size_t* i, Scope* scope, AST_Stat
 
         char* identifier;
         VariableType* type = ParseVariableType(t->tokens, i, t->curLength, scope, &identifier, false);
+
+        if (identifier == NULL)
+        {
+            PopCur(i, Semicolon);
+            return true;
+        }
 
         if (type == NULL)
             ErrorAtToken("Invalid variable type!", &t->tokens[*i]);

@@ -11,11 +11,9 @@ src/CodeGeneration/CG_NativeOP.c
 src/CodeGeneration/CG_Statement.c
 src/CodeGeneration/CG_UnOp.c
 
-src/Parser/P_BinOp.c
 src/Parser/P_Expression.c
 src/Parser/P_Statement.c
 src/Parser/P_Type.c
-src/Parser/P_UnOp.c
 
 src/Compiler.c
 src/Data.c

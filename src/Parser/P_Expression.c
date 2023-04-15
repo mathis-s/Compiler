@@ -5,172 +5,28 @@
 #include "../Scope.h"
 #include "../Token.h"
 #include "../Util.h"
-#include "P_BinOp.h"
-#include "P_UnOp.h"
 #include "P_Type.h"
 #include <stdbool.h>
 
-static bool TryParseListLiteral(Token* b, int length, Scope* scope, AST_Expression_ListLiteral** outExpr)
-{
-    if (b[0].type != CBrOpen)
-        return false;
+static void ParseExpressionPrec(Token* b, int length, size_t* i, Scope* scope, int minPrec, AST_Expression** outExpr);
 
-    GenericList expressions = GenericList_Create(sizeof(AST_Expression*));
-
-    int index = 1;
-    int inBracketR = 0;
-    int inBracketC = 0;
-    int inBracketA = 0;
-
-    while (true)
-    {
-        int exprLen = 0;
-
-        // List Literals might be nested, so count brackets to find the end.
-        while (inBracketC + inBracketA + inBracketR > 0 || (b[index + exprLen].type != Comma))
-        {
-            switch (b[index + exprLen].type)
-            {
-                case RBrOpen:
-                    inBracketR++;
-                    break;
-                case RBrClose:
-                    inBracketR--;
-                    break;
-                case CBrOpen:
-                    inBracketC++;
-                    break;
-                case CBrClose:
-                    inBracketC--;
-                    break;
-                case ABrOpen:
-                    inBracketA++;
-                    break;
-                case ABrClose:
-                    inBracketA--;
-                    break;
-                default:
-                    break;
-            }
-
-            if (inBracketC == -1)
-                break;
-
-            if ((++exprLen) + index >= length)
-                SyntaxErrorAtToken(b);
-        }
-        if (exprLen == 0)
-        {
-            if (inBracketC != -1)
-                SyntaxErrorAtToken(b);
-        }
-        else
-        {
-            AST_Expression* expr;
-            ParseExpression(&b[index], exprLen, scope, &expr);
-            GenericList_Append(&expressions, &expr);
-
-            index += exprLen;
-        }
-
-        if (b[index].type == CBrClose)
-            break;
-        index++;
-        if (b[index].type == CBrClose)
-            break;
-    }
-
-    if (index != length - 1)
-        SyntaxErrorAtToken(&b[index]);
-
-    GenericList_ShrinkToSize(&expressions);
-
-    AST_Expression_ListLiteral* retval = xmalloc(sizeof(AST_Expression_ListLiteral));
-    retval->type = AST_ExpressionType_ListLiteral;
-    retval->expressions = expressions.data;
-    retval->numExpr = expressions.count;
-    retval->loc = Token_GetLocationP(&b[0]);
-    *outExpr = retval;
-    return true;
-}
-
-bool TryParseArrayMemberAccess(Token* b, int length, Scope* scope, AST_Expression_BinOp** expr)
-{
-    if (length < 4 || b[length - 1].type != ABrClose)
-        return false;
-
-    int index = length - 1;
-    {
-        int inBracketR = 0;
-        int inBracketC = 0;
-        int inBracketA = -1;
-
-        while ((inBracketA + inBracketC + inBracketR) != 0)
-        {
-            if (--index < 0)
-                return false;
-
-            switch (b[index].type)
-            {
-                case RBrOpen:
-                    inBracketR++;
-                    break;
-                case RBrClose:
-                    inBracketR--;
-                    break;
-                case CBrOpen:
-                    inBracketC++;
-                    break;
-                case CBrClose:
-                    inBracketC--;
-                    break;
-                case ABrOpen:
-                    inBracketA++;
-                    break;
-                case ABrClose:
-                    inBracketA--;
-                    break;
-                default:
-                    break;
-            }
-        }
-    }
-
-    AST_Expression_BinOp* retval = xmalloc(sizeof(AST_Expression_BinOp));
-    retval->loc = Token_GetLocationP(&b[index]);
-    retval->type = AST_ExpressionType_BinaryOP;
-    retval->op = BinOp_ArrayAccess;
-
-    ParseExpression(b, index, scope, &retval->exprA);
-
-    index++;
-
-    size_t indexExprLen = length - (index)-1;
-    if (indexExprLen == 0)
-        SyntaxErrorAtToken(b);
-    ParseExpression(b + index, indexExprLen, scope, &retval->exprB);
-
-    *expr = retval;
-    return true;
-}
-
-bool TryParseTypeCast(Token* b, int length, Scope* scope, AST_Expression_TypeCast** expr)
+bool TryParseTypeCast(Token* b, size_t length, size_t* i, Scope* scope, AST_Expression_TypeCast** expr)
 {
     // Type Cast
-    if (b[0].type == RBrOpen && length > 1 && IsDataToken(b[1], scope))
+    if (b[*i].type == RBrOpen && length > (*i + 1) && IsDataToken(b[*i + 1], scope))
     {
-        size_t i = 1;
-        VariableType* newType = ParseVariableType(b, &i, length, scope, NULL, false);
+        P_Type_Inc(b, length, i);
 
-        if (b[i++].type != RBrClose)
-            SyntaxErrorAtToken(b);
+        VariableType* newType = ParseVariableType(b, i, length, scope, NULL, false);
+
+        P_Type_PopCur(b, length, i, RBrClose);
 
         AST_Expression_TypeCast* retval = xmalloc(sizeof(AST_Expression_TypeCast));
-        ParseExpression(b + i, length - i, scope, &(retval->exprA));
+        ParseExpressionPrec(b, length, i, scope, 14 - 2, &retval->exprA);
 
         retval->newType = newType;
         retval->type = AST_ExpressionType_TypeCast;
-        retval->loc = Token_GetLocationP(&b[0]);
+        retval->loc = Token_GetLocationP(&b[*i]);
 
         *expr = retval;
 
@@ -180,42 +36,55 @@ bool TryParseTypeCast(Token* b, int length, Scope* scope, AST_Expression_TypeCas
     return false;
 }
 
-bool TryParseFunctionCall(Token* b, int length, Scope* scope, AST_Expression_FunctionCall** outExpr)
+bool TryParseFunctionCall(Token* b, int length, size_t* i, Scope* scope, AST_Expression_FunctionCall** outExpr)
 {
-    if (b[0].type == Identifier)
+    if (b[*i].type == Identifier)
     {
-        char* identifier = b[0].data;
-        if (length < 3 || b[1].type != RBrOpen)
+        char* identifier = b[*i].data;
+        if (length < 3 || b[*i + 1].type != RBrOpen)
             return false;
 
-        Variable* funcPointer = NULL;
+        Token* const exprEnd = &b[*i];
+        P_Type_Inc(b, length, i);
+        P_Type_Inc(b, length, i);
+
         Function* outFunc = NULL;
 
-        if ((funcPointer = Scope_FindVariable(scope, identifier)) != NULL &&
+        // FIXME: after parsing variable cannot be found in scope yet!
+        /*if ((funcPointer = Scope_FindVariable(scope, identifier)) != NULL &&
             funcPointer->type->token == FunctionPointerToken)
         {
-            outFunc = funcPointer->type->structure;
-        }
-        else if ((outFunc = Function_Find(identifier)) == NULL)
-            ErrorAtToken("Undefined identifier!", &b[0]);
+            outFunc = &((VariableTypeFunctionPointer*)funcPointer->type)->func;
+        }*/
+        outFunc = Function_Find(identifier);
+        if (outFunc)
+            Optimizer_LogFunctionCall(outFunc->modifiedRegisters);
+        else
+            Optimizer_LogFunctionCall(0xFFFF);
 
-        Optimizer_LogFunctionCall(outFunc->modifiedRegisters);
-
-        // We tell the code generator to preferably use registers that are not modified
-        // in function calls, such that we don't have to push/pop them.
-        // Function_GetCurrent()->preferredRegisters &= ~(outFunc->modifiedRegisters);
-
-        if (b[length - 1].type != RBrClose)
-            ErrorAtToken("Invalid function call", &b[0]);
-
-        Token* exprBegin = &b[length - 2];
-        int curExprLength = 1;
-        size_t parameterIndex = 0;
-        GenericList params = GenericList_Create(sizeof(AST_Expression*));
-
-        int inBracketR = 0;
+        int inBracketR = 1;
         int inBracketC = 0;
         int inBracketA = 0;
+        // Find closing bracket of call
+        while (inBracketR || inBracketC || inBracketA)
+        {
+            switch (b[*i].type)
+            {
+                case RBrOpen: inBracketR++; break;
+                case RBrClose: inBracketR--; break;
+                case CBrOpen: inBracketC++; break;
+                case CBrClose: inBracketC--; break;
+                case ABrOpen: inBracketA++; break;
+                case ABrClose: inBracketA--; break;
+                default: break;
+            }
+            P_Type_Inc(b, length, i);
+        }
+
+        Token* exprBegin = &b[*i - 2];
+
+        int curExprLength = 1;
+        GenericList params = GenericList_Create(sizeof(AST_Expression*));
 
         // We parse args backwards here as that is also the order they are compiled in.
         // The optimizer has problems when the order of variable accesses in the parser
@@ -228,7 +97,7 @@ bool TryParseFunctionCall(Token* b, int length, Scope* scope, AST_Expression_Fun
                     (exprBegin->type == Comma || exprBegin->type == RBrOpen))
                 {
                     // Parse Expression
-                    if (outFunc->parameters.count == 0 && exprBegin->type == RBrClose)
+                    if (exprBegin->type == RBrClose)
                         break;
 
                     if (curExprLength <= 1)
@@ -238,50 +107,41 @@ bool TryParseFunctionCall(Token* b, int length, Scope* scope, AST_Expression_Fun
                     ParseExpression(exprBegin + 1, curExprLength - 1, scope, &astExpr);
                     GenericList_Append(&params, &astExpr);
 
-                    if (outFunc->parameters.count <= parameterIndex && !outFunc->variadicArguments)
-                        ErrorAtToken("Invalid parameter count", exprBegin);
+                    // if (outFunc->parameters.count <= parameterIndex && !outFunc->variadicArguments)
+                    //     ErrorAtToken("Invalid parameter count", exprBegin);
 
                     curExprLength = 0;
                 }
 
                 switch (exprBegin->type)
                 {
-                    case RBrOpen:
-                        inBracketR++;
-                        break;
-                    case RBrClose:
-                        inBracketR--;
-                        break;
-                    case CBrOpen:
-                        inBracketC++;
-                        break;
-                    case CBrClose:
-                        inBracketC--;
-                        break;
-                    case ABrOpen:
-                        inBracketA++;
-                        break;
-                    case ABrClose:
-                        inBracketA--;
-                        break;
-                    default:
-                        break;
+                    case RBrOpen: inBracketR++; break;
+                    case RBrClose: inBracketR--; break;
+                    case CBrOpen: inBracketC++; break;
+                    case CBrClose: inBracketC--; break;
+                    case ABrOpen: inBracketA++; break;
+                    case ABrClose: inBracketA--; break;
+                    default: break;
                 }
 
                 curExprLength++;
                 exprBegin--;
-                if ((exprBegin) < &b[0])
+                if ((exprBegin) < exprEnd)
                     SyntaxErrorAtToken(b);
             }
 
         GenericList_ShrinkToSize(&params);
         AST_Expression_FunctionCall* retval = xmalloc(sizeof(AST_Expression_FunctionCall));
-        retval->loc = Token_GetLocationP(&b[0]);
+        retval->loc = Token_GetLocationP(&b[*i]);
         retval->type = AST_ExpressionType_FunctionCall;
         retval->id = identifier;
 
         retval->parameters = params.data;
         retval->numParameters = params.count;
+
+        if (!outFunc)
+            // Hacky cast here, but this works because of struct layout
+            Optimizer_LogAccess((AST_Expression_VariableAccess*)retval);
 
         *outExpr = retval;
 
@@ -316,107 +176,267 @@ bool TryParseSizeOf(Token* b, int length, Scope* scope, AST_Expression_IntLitera
     return true;
 }
 
+static void ParsePrimaryExpression(Token* b, size_t length, size_t* i, Scope* scope, AST_Expression** outExpr)
+{
+    assert(*i < length);
+
+    switch (b[*i].type)
+    {
+        case RBrOpen:
+        {
+            if (TryParseTypeCast(b, length, i, scope, (AST_Expression_TypeCast**)outExpr))
+                break;
+            P_Type_Inc(b, length, i);
+            ParseExpressionPrec(b, length, i, scope, 0, outExpr);
+            P_Type_PopCur(b, length, i, RBrClose);
+            break;
+        }
+        case CBrOpen:
+        {
+            GenericList expressions = GenericList_Create(sizeof(AST_Expression*));
+            P_Type_Inc(b, length, i);
+
+            while (b[*i].type != CBrClose)
+            {
+                AST_Expression* outExpr;
+                ParseExpressionPrec(b, length, i, scope, 0, &outExpr);
+                GenericList_Append(&expressions, &outExpr);
+
+                if (b[*i].type == Comma)
+                    P_Type_Inc(b, length, i);
+                else if (b[*i].type != CBrClose)
+                    SyntaxErrorAtToken(&b[*i]);
+            }
+            P_Type_Inc(b, length, i);
+
+            GenericList_ShrinkToSize(&expressions);
+
+            AST_Expression_ListLiteral* retval = xmalloc(sizeof(AST_Expression_ListLiteral));
+            retval->type = AST_ExpressionType_ListLiteral;
+            retval->expressions = expressions.data;
+            retval->numExpr = expressions.count;
+            retval->loc = Token_GetLocationP(&b[0]);
+            *outExpr = (AST_Expression*)retval;
+            break;
+        }
+        case IntLiteral:
+        {
+            int32_t* literal = (int32_t*)b[*i].data;
+
+            AST_Expression_IntLiteral* retval = xmalloc(sizeof(AST_Expression_IntLiteral));
+            retval->type = AST_ExpressionType_IntLiteral;
+            retval->literal = *literal;
+            retval->loc = Token_GetLocationP(b);
+            *outExpr = (void*)retval;
+            P_Type_Inc(b, length, i);
+            break;
+        }
+        case StringLiteral:
+        {
+            AST_Expression_StringLiteral* retval = xmalloc(sizeof(AST_Expression_StringLiteral));
+            retval->type = AST_ExpressionType_StringLiteral;
+            retval->data = b[*i].data;
+            retval->loc = Token_GetLocationP(b);
+            *outExpr = (void*)retval;
+            P_Type_Inc(b, length, i);
+            break;
+        }
+        case Identifier:
+        {
+            if (TryParseFunctionCall(b, length, i, scope, (AST_Expression_FunctionCall**)outExpr))
+                break;
+
+            AST_Expression_VariableAccess* retval = xmalloc(sizeof(AST_Expression_VariableAccess));
+            retval->type = AST_ExpressionType_VariableAccess;
+            retval->id = b[*i].data;
+            retval->loc = Token_GetLocationP(b);
+            *outExpr = (void*)retval;
+            Optimizer_LogAccess(retval);
+            P_Type_Inc(b, length, i);
+            break;
+        }
+        case SizeOfKeyword:
+        {
+            P_Type_PopNextInc(b, length, i, RBrOpen);
+
+            VariableType* type = ParseVariableType(b, i, length, scope, NULL, false);
+            int size = SizeInWords(type);
+            Type_RemoveReference(type);
+
+            AST_Expression_IntLiteral* retval = xmalloc(sizeof(AST_Expression_IntLiteral));
+            retval->type = AST_ExpressionType_IntLiteral;
+            retval->loc = Token_GetLocationP(&b[0]);
+            if (size < 1)
+                ErrorAtToken("Invalid variable type", &b[0]);
+            retval->literal = (int32_t)size;
+            *outExpr = (AST_Expression*)retval;
+
+            P_Type_PopCur(b, length, i, RBrClose);
+            break;
+        }
+        default:
+        {
+            // Prefix Unary Ops
+            TokenType type = b[*i].type;
+            if (type >= BitwiseNOT && type <= Ampersand)
+            {
+                AST_Expression_UnOp* unop = xmalloc(sizeof(AST_Expression_UnOp));
+                unop->type = AST_ExpressionType_UnaryOP;
+                unop->loc = Token_GetLocationP(&b[*i]);
+                unop->op = b[*i].type - BitwiseNOT;
+                P_Type_Inc(b, length, i);
+                ParseExpressionPrec(b, length, i, scope, 14 - 2, &unop->exprA);
+                *outExpr = (AST_Expression*)unop;
+
+                if (type == Ampersand && unop->exprA->type == AST_ExpressionType_VariableAccess)
+                    Optimizer_LogAddrOf(((AST_Expression_VariableAccess*)unop->exprA)->id);
+
+                break;
+            }
+            else
+                SyntaxErrorAtToken(&b[*i]);
+        }
+    }
+}
+
+static void ParseExpressionPrec(Token* b, int length, size_t* i, Scope* scope, int minPrec, AST_Expression** outExpr)
+{
+
+    // Used for parsing binOps or postfix unOps
+    const static char precTable[35] = {
+        0x00 | (14 - 1),  // PostInc,
+        0x00 | (14 - 1),  // PostDec,
+        0x00 | (14 - 4),  // Plus,
+        0x00 | (14 - 4),  // Minus,
+        0x00 | (14 - 3),  // Star,
+        0x00 | (14 - 8),  // Ampersand,
+        0x00 | (14 - 3),  // Slash,
+        0x00 | (14 - 10), // BitwiseOR,
+        0x00 | (14 - 9),  // BitwiseXOR,
+        0x00 | (14 - 5),  // ShiftLeft,
+        0x00 | (14 - 5),  // ShiftRight,
+        0x00 | (14 - 3),  // Percent,
+        0x00 | (14 - 11), // LogicalAND,
+        0x00 | (14 - 12), // LogicalOR,
+        0x00 | (14 - 1),  // ABrOpen
+        0x00 | (14 - 1),  // Dot,
+        0x00 | (14 - 1),  // Arrow,
+        0x00 | (14 - 6),  // LessThan,
+        0x00 | (14 - 6),  // LessThanEq,
+        0x00 | (14 - 6),  // GreaterThan,
+        0x00 | (14 - 6),  // GreaterThanEq,
+        0x00 | (14 - 7),  // Equals,
+        0x00 | (14 - 7),  // NotEquals,
+        0x80 | (14 - 14), // AssignmentAdd,
+        0x80 | (14 - 14), // AssignmentSub,
+        0x80 | (14 - 14), // AssignmentMul,
+        0x80 | (14 - 14), // AssignmentDiv,
+        0x80 | (14 - 14), // AssignmentAND,
+        0x80 | (14 - 14), // AssignmentOR,
+        0x80 | (14 - 14), // AssignmentXOR,
+        0x80 | (14 - 14), // AssignmentShiftLeft,
+        0x80 | (14 - 14), // AssignmentShiftRight,
+        0x80 | (14 - 14), // AssignmentMod,
+        0x80 | (14 - 14), // Assignment,
+        0x80 | (14 - 13), // QuestionMark,
+    };
+
+    AST_Expression* left;
+    ParsePrimaryExpression(b, length, i, scope, &left);
+
+    SourceLocation loc = Token_GetLocationP(&b[*i]);
+
+    // bool runtime = (Function_GetCurrent() != NULL);
+    while (1)
+    {
+        Token next = b[*i];
+        if (!(next.type >= Increment && next.type <= QuestionMark))
+        {
+            *outExpr = left;
+            return;
+        }
+
+        char prec = precTable[next.type - Increment];
+        bool rassoc = prec & 128;
+        prec &= 127;
+
+        if (prec < minPrec)
+        {
+            *outExpr = left;
+            return;
+        }
+
+        P_Type_Inc(b, length, i);
+
+        AST_Expression* right;
+        if (next.type >= Increment && next.type <= Decrement)
+        {
+            // Postfix unary operators
+            AST_Expression_UnOp* unop = xmalloc(sizeof(AST_Expression_UnOp));
+            unop->type = AST_ExpressionType_UnaryOP;
+            unop->loc = Token_GetLocationP(&b[*i]);
+            unop->op = next.type - Increment + UnOp_PostIncrement;
+            unop->exprA = left;
+            *outExpr = (AST_Expression*)unop;
+            
+            left = (AST_Expression*)unop;
+            continue;
+        }
+        else if (next.type == Arrow || next.type == Dot) 
+        {
+            // Only valid RHS for struct access is identifier
+            AST_Expression_VariableAccess* rightAcc = xmalloc(sizeof(AST_Expression_VariableAccess));
+            rightAcc->loc = Token_GetLocationP(&b[*i]);
+            rightAcc->type = AST_ExpressionType_VariableAccess;
+            rightAcc->id = P_Type_PopCur(b, length, i, Identifier); 
+            right = (AST_Expression*)rightAcc;
+        }
+        else
+        {
+            // Regular Ops
+            int subExPrec = rassoc ? prec : (prec + 1);
+            if (next.type == ABrOpen)
+                subExPrec = 0;
+            ParseExpressionPrec(b, length, i, scope, subExPrec, &right);
+        }
+
+        // Ternary needs special handling
+        if (next.type == QuestionMark)
+        {
+            P_Type_PopCur(b, length, i, Colon);
+            AST_Expression_TernaryOp* op = xmalloc(sizeof(AST_Expression_TernaryOp));
+            ParseExpressionPrec(b, length, i, scope, prec, &op->exprB);
+            op->cond = left;
+            op->exprA = right;
+            op->loc = loc;
+            op->type = AST_ExpressionType_TernaryOP;
+            left = (AST_Expression*)op;
+        }
+        else
+        {
+            // could also check struct access right operand is identifier here?
+            if (next.type == ABrOpen)
+                P_Type_PopCur(b, length, i, ABrClose);
+
+            AST_Expression_BinOp* op = xmalloc(sizeof(AST_Expression_BinOp));
+            op->exprA = left;
+            op->exprB = right;
+            op->loc = loc;
+            op->op = next.type - Plus;
+            op->type = AST_ExpressionType_BinaryOP;
+            left = (AST_Expression*)op;
+        }
+    }
+}
+
 void ParseExpression(Token* b, int length, Scope* scope, AST_Expression** outExpr)
 {
-    if (length == 1)
-        switch (b[0].type)
-        {
-            case IntLiteral:
-            {
-                int32_t* literal = (int32_t*)b->data;
+    size_t i = 0;
+    ParseExpressionPrec(b, length, &i, scope, 0, outExpr);
+    if (i != (size_t)length)
+        SyntaxErrorAtToken(&b[0]);
 
-                AST_Expression_IntLiteral* retval = xmalloc(sizeof(AST_Expression_IntLiteral));
-                retval->type = AST_ExpressionType_IntLiteral;
-                retval->literal = *literal;
-                retval->loc = Token_GetLocationP(b);
-                *outExpr = (void*)retval;
-                return;
-            }
-            case StringLiteral:
-            {
-                AST_Expression_StringLiteral* retval = xmalloc(sizeof(AST_Expression_StringLiteral));
-                retval->type = AST_ExpressionType_StringLiteral;
-                retval->data = b[0].data;
-                retval->loc = Token_GetLocationP(b);
-                *outExpr = (void*)retval;
-                return;
-            }
-            case Identifier:
-            {
-                AST_Expression_VariableAccess* retval = xmalloc(sizeof(AST_Expression_VariableAccess));
-                retval->type = AST_ExpressionType_VariableAccess;
-                retval->id = b[0].data;
-                retval->loc = Token_GetLocationP(b);
-                *outExpr = (void*)retval;
-                Optimizer_LogAccess(retval);
-                return;
-            }
-            default:
-                SyntaxErrorAtToken(b);
-        }
-
-    int precedence = 13;
-    bool runtime = (Function_GetCurrent() != NULL);
-    while (true)
-    {
-        AST_Expression* expr;
-
-        if (precedence == 0)
-        {
-            if (runtime && TryParseArrayMemberAccess(b, length, scope, (void*)(&expr)))
-            {
-                *outExpr = expr;
-                break;
-            }
-        }
-        if (precedence <= 1 && runtime && TryParseUnaryOperator(b, length, scope, (void*)(&expr), precedence))
-        {
-            *outExpr = expr;
-            break;
-        }
-        else if (runtime && TryParseBinaryOperator(b, length, scope, (void*)(&expr), precedence))
-        {
-            *outExpr = expr;
-            break;
-        }
-        else if (precedence == 0)
-        {
-            if (TryParseListLiteral(b, length, scope, (void*)(&expr)))
-            {
-                *outExpr = expr;
-                break;
-            }
-            else if (runtime && TryParseFunctionCall(b, length, scope, (void*)(&expr)))
-            {
-                *outExpr = expr;
-                break;
-            }
-            else if (b[0].type == RBrOpen)
-            {
-                if (b[length - 1].type != RBrClose)
-                    SyntaxErrorAtToken(&b[length - 1]);
-                ParseExpression(b + 1, length - 2, scope, outExpr);
-                break;
-            }
-        }
-        else if (precedence == 1)
-        {
-            if (TryParseTypeCast(b, length, scope, (void*)(&expr)))
-            {
-                *outExpr = expr;
-                break;
-            }
-            else if (TryParseSizeOf(b, length, scope, (void*)(&expr)))
-            {
-                *outExpr = expr;
-                break;
-            }
-        }
-
-        precedence--;
-        if (precedence == -1)
-            SyntaxErrorAtToken(b);
-    }
+    // PrintExpressionTree(*outExpr, 0);
 }
 
 void ParseNextExpressionWithSeparator(TokenArray* t, size_t* i, Scope* scope, AST_Expression** outExpr,
@@ -447,3 +467,63 @@ void ParseNextExpression(TokenArray* t, size_t* i, Scope* scope, AST_Expression*
 {
     ParseNextExpressionWithSeparator(t, i, scope, outExpr, Semicolon, 0);
 }
+/*
+void PrintExpressionTree(AST_Expression* expr, int indent)
+{
+    for (int i = 0; i < indent; i++)
+        printf("  ");
+    switch (expr->type)
+    {
+        case AST_ExpressionType_UnaryOP:
+            printf("UnOp %i (\n", ((AST_Expression_UnOp*)expr)->op);
+            PrintExpressionTree(((AST_Expression_UnOp*)expr)->exprA, indent + 1);
+            for (int i = 0; i < indent; i++)
+                printf("  ");
+            printf(")\n");
+            break;
+        case AST_ExpressionType_BinaryOP:
+            printf("BinOp %i (\n", ((AST_Expression_BinOp*)expr)->op);
+            PrintExpressionTree(((AST_Expression_BinOp*)expr)->exprA, indent + 1);
+
+            PrintExpressionTree(((AST_Expression_BinOp*)expr)->exprB, indent + 1);
+
+            for (int i = 0; i < indent; i++)
+                printf("  ");
+            printf(")\n");
+            break;
+        case AST_ExpressionType_FunctionCall:;
+            printf("Call %s (\n", ((AST_Expression_FunctionCall*)expr)->id);
+            AST_Expression_FunctionCall* fcall = expr;
+            for (size_t i = 0; i < fcall->numParameters; i++)
+            {
+                PrintExpressionTree(fcall->parameters[i], indent + 1);
+            }
+            for (int i = 0; i < indent; i++)
+                printf("  ");
+            printf(")\n");
+            break;
+        case AST_ExpressionType_ListLiteral:;
+            AST_Expression_ListLiteral* list = expr;
+            printf("List (\n");
+            for (size_t i = 0; i < list->numExpr; i++)
+            {
+                PrintExpressionTree(list->expressions[i], indent + 1);
+            }
+            for (int i = 0; i < indent; i++)
+                printf("  ");
+            printf(")\n");
+            break;
+        case AST_ExpressionType_TypeCast:
+            PrintExpressionTree(((AST_Expression_TypeCast*)expr)->exprA, indent + 1);
+            break;
+        case AST_ExpressionType_VariableAccess:
+            printf("Var %s\n", ((AST_Expression_VariableAccess*)expr)->id);
+            break;
+        case AST_ExpressionType_IntLiteral:
+            printf("Lit %i\n", ((AST_Expression_IntLiteral*)expr)->literal);
+            break;
+        default:
+            printf("Atom %i\n", expr->type);
+            break;
+    }
+}*/

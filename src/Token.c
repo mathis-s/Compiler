@@ -131,15 +131,17 @@ void Token_AppendArray(Token t, TokenArray* array, uint16_t lineNumber, char* so
 }
 
 // Some helper methods for easier parsing
-void PopNext(size_t* i, TokenType type)
+void* PopNext(size_t* i, TokenType type)
 {
     if (++(*i) >= currentTokenArray->curLength)
         SyntaxErrorAtIndex(*i - 1);
     if (currentTokenArray->tokens[*i].type != type)
         SyntaxErrorAtIndex(*i);
+        
+    return currentTokenArray->tokens[*i].data;
 }
 
-void PopNextInc(size_t* i, TokenType type)
+void* PopNextInc(size_t* i, TokenType type)
 {
     if (++(*i) >= currentTokenArray->curLength)
         SyntaxErrorAtIndex(*i - 1);
@@ -147,14 +149,18 @@ void PopNextInc(size_t* i, TokenType type)
         SyntaxErrorAtIndex(*i);
     if (++(*i) >= currentTokenArray->curLength)
         SyntaxErrorAtIndex(*i - 1);
+
+    return currentTokenArray->tokens[(*i) - 1].data;
 }
 
-void PopCur(size_t* i, TokenType type)
+void* PopCur(size_t* i, TokenType type)
 {
     if (currentTokenArray->tokens[*i].type != type)
         SyntaxErrorAtIndex(*i);
     if (++(*i) >= currentTokenArray->curLength)
         SyntaxErrorAtIndex(*i - 1);
+
+    return currentTokenArray->tokens[(*i) - 1].data;
 }
 
 void Inc(size_t* i)
