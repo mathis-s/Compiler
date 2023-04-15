@@ -1,5 +1,5 @@
 # Compiler
-A minimal C-Compiler for my custom 16-bit RISC Architecture, capable of compiling itself.
+A minimal C compiler for my custom 16-bit RISC architecture, capable of compiling itself.
 
 ## Example
 
@@ -59,6 +59,20 @@ mov ip, [sp]
 </tr>
 </table>
 
+## Limitations
+This is not a conformant C compiler (at all!). Here are the most important things that are missing or different
+- Type conversion behaviour is different
+- Parsing is not quite the same as in standard C
+- Preprocessor only supports #include, #define, #ifdef, and #pragma once
+- Primitives are:
+  - `int` (alias `int16`, `int16_t`)
+  - `uint` (alias `uint16`, `uint16_t`, `size_t`, `char`)
+  - `int32` (alias `int32_t`)
+  - `uint32` (alias `uint32_t`)
+  - `fixed` (8.8 fixed point)
+  
+These are just off the top of my head, there surely are many others!
+
 ## Building
 Just a CMake project, so 
 
@@ -78,20 +92,6 @@ There are no command-line switches as of now, so just
 > ./comp [SOURCE FILES..]
 ```
 This will generate assembly in `out.s` and data in `data.bin`.
-
-## Limitations
-This is not a conformant C compiler (at all!). Here are the most important things that are missing or different
-- Type conversion behaviour is different
-- Parsing is not quite the same as in standard C
-- Preprocessor only supports #include, #define, #ifdef, and #pragma once
-- Primitives are:
-  - `int` (alias `int16`, `int16_t`)
-  - `uint` (alias `uint16`, `uint16_t`, `size_t`, `char`)
-  - `int32` (alias `int32_t`)
-  - `uint32` (alias `uint32_t`)
-  - `fixed` (8.8 fixed point)
-  
-These are just off the top of my head, there surely are many others!
 
 ## Notes
 This is my first major project in C, so please let me know if you have thoughts on improving the structure of the program, or anything else! 
