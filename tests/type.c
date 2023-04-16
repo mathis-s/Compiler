@@ -5,11 +5,9 @@ int (*func(int a))[10]
     return (int (*)[10]) 0xf00f;
 }
 
-int main (int i)
+int func1 (int i)
 {
     int (*(*b)(int))[10] = func;
-
-
     return (*b(0))[9];
 }
 

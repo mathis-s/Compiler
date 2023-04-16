@@ -18,7 +18,7 @@ struct coord
     int y;
 };
 
-int foo (uint n, struct coord* coords)
+int foo (int n, struct coord* coords)
 {
     int sum = 0;
     for (int i = 0; i < n; i++)
