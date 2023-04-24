@@ -92,8 +92,3 @@ There are no command-line switches as of now, so just
 > ./comp [SOURCE FILES..]
 ```
 This will generate assembly in `out.s` and data in `data.bin`.
-
-## Notes
-This is my first major project in C, so please let me know if you have thoughts on improving the structure of the program, or anything else! 
-
-Some weirdness is also due to the limitations of the compiler right now, and me still wanting to have it be able to compile itself, though.
