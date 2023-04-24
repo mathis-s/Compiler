@@ -1,6 +1,10 @@
 # Compiler
 A minimal C compiler for my custom 16-bit RISC architecture, capable of compiling itself.
 
+Currently does two passes:
+1. Parse to AST (also analyzes variable lifetime)
+2. Generate Code from AST (no IR, `fprintf` straight to output file)
+
 ## Example
 
 <table>
